@@ -107,7 +107,7 @@ void Win32OpenGLImGuiRenderer::
             if (viewport->RendererUserData != nullptr) {
 #if defined(_DEBUG)
                 fprintf(stderr,
-                        "ImGuiViewport->RendererUserData is not nullptr!!!");
+                        "ImGuiViewport->RendererUserData is not nullptr!!!\n");
 #endif
                 return;
             }

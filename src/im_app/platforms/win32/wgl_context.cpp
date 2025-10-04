@@ -10,7 +10,7 @@ static void GLAPIENTRY debug_callback(GLenum source, GLenum type, GLuint id,
                                       const GLchar* message,
                                       const void* user_param) {
     if (type == GL_DEBUG_TYPE_ERROR) {
-        fprintf(stderr, "WGL Error: %s", message);
+        fprintf(stderr, "WGL Error: %s\n", message);
     }
 }
 #endif
@@ -45,7 +45,7 @@ void WGLContext::initialize() {
     const GLubyte* gl_version_string = glGetString(GL_VERSION);
     const GLubyte* gl_renderer = glGetString(GL_RENDERER);
 
-    fprintf(stdout, "OpenGL is intialized, version: %d.%d context(%s, %s)",
+    fprintf(stdout, "OpenGL is intialized, version: %d.%d context(%s, %s)\n",
             m_major_version, m_minor_version,
             reinterpret_cast<const char*>(gl_version_string),
             reinterpret_cast<const char*>(gl_renderer));
@@ -77,13 +77,13 @@ bool WGLContext::create_device(HWND hwnd, HDC& hdc) {
     const int pf = ::ChoosePixelFormat(temp_hdc, &pfd);
     if (pf == 0) {
 #if defined(_DEBUG)
-        fprintf(stderr, "[WGLContext] Failed to choose pixel format.");
+        fprintf(stderr, "[WGLContext] Failed to choose pixel format.\n");
 #endif
         return false;
     }
     if (::SetPixelFormat(temp_hdc, pf, &pfd) == FALSE) {
 #if defined(_DEBUG)
-        fprintf(stderr, "[WGLContext] Failed to set pixel format.");
+        fprintf(stderr, "[WGLContext] Failed to set pixel format.\n");
 #endif
         return false;
     }

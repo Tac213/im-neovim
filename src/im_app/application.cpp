@@ -25,6 +25,9 @@ int Application::exec() {
     m_is_running = true;
     // Main loop
     while (m_is_running) {
+        if (m_window) {
+            m_window->on_update();
+        }
         for (auto& layer : m_layer_stack) {
             layer->on_update();
         }
@@ -34,9 +37,6 @@ int Application::exec() {
         }
         m_imgui_renderer->render(m_window);
         m_graphics_context->swap_buffers();
-        if (m_window) {
-            m_window->on_update();
-        }
     }
     return 0;
 }
