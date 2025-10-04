@@ -61,8 +61,6 @@ void Win32OpenGLImGuiRenderer::
     auto context = WGLContext::get();
     IM_ASSERT(context);
     float main_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(context->get_hwnd());
-    UINT a = ::GetDpiForWindow(context->get_hwnd());
-    UINT b = ::GetDpiForSystem();
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
