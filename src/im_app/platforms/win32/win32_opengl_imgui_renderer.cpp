@@ -58,21 +58,42 @@ void Win32OpenGLImGuiRenderer::
                                                         // / Platform Windows
     io.IniFilename = nullptr;                           // Disable imgui.ini
 
+    auto context = WGLContext::get();
+    IM_ASSERT(context);
+    float main_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(context->get_hwnd());
+    UINT a = ::GetDpiForWindow(context->get_hwnd());
+    UINT b = ::GetDpiForSystem();
+
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
     // ImGui::StyleColorsClassic();
 
+    // Setup scaling
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.ScaleAllSizes(
+        main_scale); // Bake a fixed style scale. (until we have a solution for
+                     // dynamic style scaling, changing this requires resetting
+                     // Style + calling this again)
+    style.FontScaleDpi =
+        main_scale; // Set initial font scale. (using
+                    // io.ConfigDpiScaleFonts=true makes this unnecessary. We
+                    // leave both here for documentation purpose)
+    io.ConfigDpiScaleFonts =
+        true; // [Experimental] Automatically overwrite style.FontScaleDpi in
+              // Begin() when Monitor DPI changes. This will scale fonts but
+              // _NOT_ scale sizes/padding for now.
+    io.ConfigDpiScaleViewports =
+        true; // [Experimental] Scale Dear ImGui and Platform Windows when
+              // Monitor DPI changes.
+
     // When viewports are enabled we tweak WindowRounding/WindowBg so platform
     // windows can look identical to regular ones.
-    ImGuiStyle& style = ImGui::GetStyle();
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
         style.WindowRounding = 0.0f;
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
     // Setup Platform/Renderer backends
-    auto context = WGLContext::get();
-    IM_ASSERT(context);
     ImGui_ImplWin32_InitForOpenGL(context->get_hwnd());
     ImGui_ImplOpenGL3_Init();
 

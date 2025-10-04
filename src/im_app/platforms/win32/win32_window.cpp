@@ -85,7 +85,6 @@ void Win32Window::_initialize(const WindowProps& props) {
     RECT window_rect = {0, 0, static_cast<LONG>(props.width),
                         static_cast<LONG>(props.height)};
     AdjustWindowRect(&window_rect, window_style, FALSE);
-    // SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     // ImGui_ImplWin32_EnableDpiAwareness();
 
