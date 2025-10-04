@@ -1,0 +1,12 @@
+*.pc
+/auto/extensions
+/auto/registry
+/bin
+/build
+/lib
+/tmp
+/out
+.DS_Store*
+auto/EGL-Registry
+auto/OpenGL-Registry
+auto/glfixes
