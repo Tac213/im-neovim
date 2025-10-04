@@ -180,7 +180,8 @@ void Win32OpenGLImGuiRenderer::
     ImGui::DestroyContext();
 }
 
-std::shared_ptr<ImGuiRenderer> ImGuiRenderer::create() {
+std::shared_ptr<ImGuiRenderer>
+ImGuiRenderer::create(std::shared_ptr<Window> window) {
     auto renderer = std::make_shared<Win32OpenGLImGuiRenderer>();
     return renderer;
 }

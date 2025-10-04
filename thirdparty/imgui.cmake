@@ -34,12 +34,28 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     )
 endif()
 
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    set(imgui_platform_specific_files
+        ${imgui_source_dir}/backends/imgui_impl_glfw.cpp
+        ${imgui_source_dir}/backends/imgui_impl_glfw.h
+    )
+endif()
+
 add_library(imgui STATIC
     ${imgui_sources}
     ${imgui_backends}
     ${imgui_miscs}
     ${imgui_platform_specific_files}
 )
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    include(FindX11)
+    target_link_libraries(imgui
+        PRIVATE
+        glfw
+        X11::X11
+    )
+endif()
 
 target_include_directories(imgui
     PUBLIC

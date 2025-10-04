@@ -50,7 +50,7 @@ void Application::_initialize() {
     m_window = Window::create(window_props);
     m_graphics_context = GraphicsContext::create(m_window);
     m_graphics_context->initialize();
-    m_imgui_renderer = ImGuiRenderer::create();
+    m_imgui_renderer = ImGuiRenderer::create(m_window);
 }
 
 void Application::_finalize() {

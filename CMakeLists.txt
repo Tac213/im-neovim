@@ -44,6 +44,19 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     )
 endif()
 
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    set(im_app_platform_dir "${im_app_dir}/platforms/linux")
+    list(APPEND im_app_platform_specific_files
+        "${im_app_platform_dir}/glfw_window.h"
+        "${im_app_platform_dir}/glfw_window.cpp"
+        "${im_app_platform_dir}/glfw_context.h"
+        "${im_app_platform_dir}/glfw_context.cpp"
+        "${im_app_platform_dir}/glfw_opengl_imgui_renderer.h"
+        "${im_app_platform_dir}/glfw_opengl_imgui_renderer.cpp"
+        "${im_app_platform_dir}/main.cpp"
+    )
+endif()
+
 add_library(im_app STATIC
     ${im_app_public_files}
     ${im_app_private_files}
@@ -72,6 +85,20 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         im_app
         PRIVATE
         opengl32.lib
+    )
+endif()
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    target_link_libraries(
+        im_app
+        PRIVATE
+        glfw
+    )
+endif()
+
+if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    target_compile_definitions(im_app PRIVATE
+        IM_APP_DEBUG=1
     )
 endif()
 
