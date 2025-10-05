@@ -78,6 +78,16 @@ void D3D12Context::swap_buffers() {
     m_frame_index++;
 }
 
+void D3D12Context::on_frame_buffer_size_changed(uint32_t width,
+                                                uint32_t height) {
+    _cleanup_render_target();
+    DXGI_SWAP_CHAIN_DESC1 desc = {};
+    m_swap_chain->GetDesc1(&desc);
+    throw_if_failed(
+        m_swap_chain->ResizeBuffers(0, width, height, desc.Format, desc.Flags));
+    _create_render_target();
+}
+
 void D3D12Context::_load_pipeline() {
     uint32_t dxgi_factory_flags = 0;
 #if defined(IM_APP_DEBUG)
@@ -275,10 +285,10 @@ void D3D12Context::_load_pipeline() {
             m_swap_chain->GetFrameLatencyWaitableObject();
     }
 
-    create_render_target();
+    _create_render_target();
 }
 
-void D3D12Context::create_render_target() {
+void D3D12Context::_create_render_target() {
     for (uint32_t i = 0; i < g_back_buffers_count; i++) {
         ComPtr<ID3D12Resource> p_back_buffer = nullptr;
         m_swap_chain->GetBuffer(i, IID_PPV_ARGS(&p_back_buffer));

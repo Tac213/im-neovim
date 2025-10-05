@@ -1,4 +1,5 @@
 #include "win32_window.h"
+#include "dx12_context.h"
 #include "im_app/application.h"
 #include <imgui_impl_win32.h>
 #include <winuser.h>
@@ -30,6 +31,11 @@ LRESULT CALLBACK Win32Window::_window_proc(HWND hwnd, uint32_t message,
         if (w_param != SIZE_MINIMIZED) {
             self->m_window_data.width = static_cast<uint32_t>(LOWORD(l_param));
             self->m_window_data.height = static_cast<uint32_t>(HIWORD(l_param));
+            auto dx12_context = D3D12Context::get();
+            if (dx12_context) {
+                dx12_context->on_frame_buffer_size_changed(
+                    self->m_window_data.width, self->m_window_data.height);
+            }
         }
         return 0;
     case WM_NCHITTEST:

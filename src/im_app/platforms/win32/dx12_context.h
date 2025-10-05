@@ -42,6 +42,8 @@ class D3D12Context : public GraphicsContext {
     virtual void initialize() override;
     virtual void finalize() override;
     virtual void swap_buffers() override;
+    virtual void on_frame_buffer_size_changed(uint32_t width,
+                                              uint32_t height) override;
 
     HWND get_hwnd() const { return m_hwnd; }
     ComPtr<ID3D12Device> get_device() const { return m_device; }
@@ -57,7 +59,6 @@ class D3D12Context : public GraphicsContext {
     }
     std::pair<D3D12_CPU_DESCRIPTOR_HANDLE*, ComPtr<ID3D12Resource>>
     get_back_buffer();
-    void create_render_target();
     void wait_for_pending_operations();
     FrameContext* wait_for_next_frame_context();
     void signal_command_queue(FrameContext* frame_context);
@@ -97,6 +98,7 @@ class D3D12Context : public GraphicsContext {
     size_t m_fence_last_signaled_value = 0;
 
     void _load_pipeline();
+    void _create_render_target();
     void _cleanup_render_target();
 };
 
