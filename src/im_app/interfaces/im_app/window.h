@@ -10,6 +10,7 @@ struct WindowProps {
     uint32_t width;
     uint32_t height;
     bool no_border;
+    bool enable_dpi_awareness = true;
 };
 
 /*

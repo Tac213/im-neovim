@@ -55,7 +55,8 @@ void GlfwContext::swap_buffers() {
 }
 
 std::shared_ptr<GraphicsContext>
-GraphicsContext::create(std::shared_ptr<Window> window) {
+GraphicsContext::create(std::shared_ptr<Window> window,
+                        GraphicsBackend backend) {
     auto glfw_window = std::static_pointer_cast<GlfwWindow>(window);
     auto context = std::make_shared<GlfwContext>(glfw_window);
     return context;

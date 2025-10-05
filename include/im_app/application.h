@@ -7,11 +7,17 @@
 #include <vector>
 
 namespace ImApp {
+enum GraphicsBackend : uint8_t {
+    PerformanceFirst,
+    CompatibilityFirst,
+};
+
 struct AppSpec {
     std::string name = "ImApp";
     uint32_t main_window_width = 1600;
     uint32_t main_window_height = 900;
     bool main_window_no_border = true;
+    GraphicsBackend graphics_backend = PerformanceFirst;
 };
 
 class ImGuiRenderer;

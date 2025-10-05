@@ -179,10 +179,4 @@ void Win32OpenGLImGuiRenderer::
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
 }
-
-std::shared_ptr<ImGuiRenderer>
-ImGuiRenderer::create(std::shared_ptr<Window> window) {
-    auto renderer = std::make_shared<Win32OpenGLImGuiRenderer>();
-    return renderer;
-}
 } // namespace ImApp

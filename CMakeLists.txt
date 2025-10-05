@@ -41,6 +41,12 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         "${im_app_platform_dir}/win32_opengl_imgui_renderer.h"
         "${im_app_platform_dir}/win32_opengl_imgui_renderer.cpp"
         "${im_app_platform_dir}/main.cpp"
+        "${im_app_platform_dir}/dx12_context.h"
+        "${im_app_platform_dir}/dx12_context.cpp"
+        "${im_app_platform_dir}/dx12_imgui_renderer.h"
+        "${im_app_platform_dir}/dx12_imgui_renderer.cpp"
+        "${im_app_platform_dir}/win32_graphics_context.cpp"
+        "${im_app_platform_dir}/win32_imgui_renderer.cpp"
     )
 endif()
 
@@ -85,6 +91,11 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         im_app
         PRIVATE
         opengl32.lib
+        d3d12.lib
+        dxgi.lib
+        d3dcompiler.lib
+        dxguid.lib
+        Microsoft::DirectX-Headers
     )
 endif()
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "im_app/application.h"
 #include <memory>
 
 namespace ImApp {
@@ -11,7 +12,7 @@ class ImGuiRenderer {
     virtual void new_frame() = 0;
     virtual void render(std::shared_ptr<Window>& window) = 0;
 
-    static std::shared_ptr<ImGuiRenderer>
-    create(std::shared_ptr<Window> window);
+    static std::shared_ptr<ImGuiRenderer> create(std::shared_ptr<Window> window,
+                                                 GraphicsBackend backend);
 };
 } // namespace ImApp

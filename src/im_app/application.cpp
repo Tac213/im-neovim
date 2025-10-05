@@ -47,10 +47,18 @@ void Application::_initialize() {
     WindowProps window_props = {m_app_spec.name, m_app_spec.main_window_width,
                                 m_app_spec.main_window_height,
                                 m_app_spec.main_window_no_border};
+#if defined(_WIN32)
+    if (m_app_spec.graphics_backend == CompatibilityFirst) {
+        // Doesn't work on win32 + opengl currently.
+        window_props.enable_dpi_awareness = false;
+    }
+#endif
     m_window = Window::create(window_props);
-    m_graphics_context = GraphicsContext::create(m_window);
+    m_graphics_context =
+        GraphicsContext::create(m_window, m_app_spec.graphics_backend);
     m_graphics_context->initialize();
-    m_imgui_renderer = ImGuiRenderer::create(m_window);
+    m_imgui_renderer =
+        ImGuiRenderer::create(m_window, m_app_spec.graphics_backend);
 }
 
 void Application::_finalize() {

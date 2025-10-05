@@ -11,7 +11,7 @@ class MyLayer : public ImApp::Layer {
 
 namespace ImApp {
 Application* create_im_app(int argc, char** argv) {
-    AppSpec app_spec{.main_window_no_border = true};
+    AppSpec app_spec{.main_window_no_border = false};
     auto* app = new Application(app_spec);
     app->push_layer<ImNeovim::MyLayer>();
     return app;

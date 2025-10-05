@@ -15,14 +15,12 @@ static void GLAPIENTRY debug_callback(GLenum source, GLenum type, GLuint id,
 }
 #endif
 
-static std::shared_ptr<WGLContext> s_instance = nullptr;
+static std::shared_ptr<WGLContext> g_instance = nullptr;
 
 WGLContext::WGLContext(std::shared_ptr<Window> window) {
     auto win32_window = std::static_pointer_cast<Win32Window>(window);
     m_hwnd = win32_window->get_hwnd();
 }
-
-std::shared_ptr<WGLContext> WGLContext::get() { return s_instance; }
 
 void WGLContext::initialize() {
     if (!create_device(m_hwnd, m_hdc)) {
@@ -60,7 +58,6 @@ void WGLContext::initialize() {
 void WGLContext::finalize() {
     cleanup_device(m_hwnd, m_hdc);
     ::wglDeleteContext(m_hrc);
-    s_instance = nullptr;
 }
 
 void WGLContext::swap_buffers() { ::SwapBuffers(m_hdc); }
@@ -106,11 +103,4 @@ bool WGLContext::make_current(HDC& hdc) { return ::wglMakeCurrent(hdc, m_hrc); }
 bool WGLContext::make_current() { return ::wglMakeCurrent(m_hdc, m_hrc); }
 
 bool WGLContext::swap_buffers(HDC& hdc) { return ::SwapBuffers(hdc); }
-
-std::shared_ptr<GraphicsContext>
-GraphicsContext::create(std::shared_ptr<Window> window) {
-    auto context = std::make_shared<WGLContext>(window);
-    s_instance = context;
-    return context;
-}
 } // namespace ImApp

@@ -69,9 +69,15 @@ void Win32Window::set_titlebar_hovered(bool hovered) {
 }
 
 void Win32Window::_initialize(const WindowProps& props) {
+    float main_scale = 1.0f;
+    if (props.enable_dpi_awareness) {
+        ImGui_ImplWin32_EnableDpiAwareness();
+        main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(
+            ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
+    }
     m_window_data.title = props.title;
-    m_window_data.width = props.width;
-    m_window_data.height = props.height;
+    m_window_data.width = static_cast<uint32_t>(props.width * main_scale);
+    m_window_data.height = static_cast<uint32_t>(props.height * main_scale);
     HINSTANCE instance = GetModuleHandle(nullptr);
     m_window_class.cbSize = sizeof(WNDCLASSEX);
     m_window_class.style = CS_HREDRAW | CS_VREDRAW;
@@ -82,8 +88,8 @@ void Win32Window::_initialize(const WindowProps& props) {
     RegisterClassEx(&m_window_class);
 
     size_t window_style = props.no_border ? WS_BORDER : WS_OVERLAPPEDWINDOW;
-    RECT window_rect = {0, 0, static_cast<LONG>(props.width),
-                        static_cast<LONG>(props.height)};
+    RECT window_rect = {0, 0, static_cast<LONG>(m_window_data.width),
+                        static_cast<LONG>(m_window_data.height)};
     AdjustWindowRect(&window_rect, window_style, FALSE);
 
     // ImGui_ImplWin32_EnableDpiAwareness();
@@ -98,8 +104,8 @@ void Win32Window::_initialize(const WindowProps& props) {
                              instance, this);
 
     // Set window position at screen center
-    int x_pos = (::GetSystemMetrics(SM_CXSCREEN) - props.width) / 2;
-    int y_pos = (::GetSystemMetrics(SM_CYSCREEN) - props.height) / 2;
+    int x_pos = (::GetSystemMetrics(SM_CXSCREEN) - m_window_data.width) / 2;
+    int y_pos = (::GetSystemMetrics(SM_CYSCREEN) - m_window_data.height) / 2;
     ::SetWindowPos(m_hwnd, nullptr, x_pos, y_pos, 0, 0,
                    SWP_NOZORDER | SWP_NOSIZE);
 

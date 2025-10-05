@@ -137,7 +137,7 @@ void GlfwOpenGLImGuiRenderer::
 }
 
 std::shared_ptr<ImGuiRenderer>
-ImGuiRenderer::create(std::shared_ptr<Window> window) {
+ImGuiRenderer::create(std::shared_ptr<Window> window, GraphicsBackend backend) {
     auto glfw_window = std::static_pointer_cast<GlfwWindow>(window);
     auto renderer = std::make_shared<GlfwOpenGLImGuiRenderer>(glfw_window);
     return renderer;
