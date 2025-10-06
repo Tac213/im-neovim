@@ -338,8 +338,7 @@ void D3D12Context::_cleanup_render_target() {
 
     for (auto& rt_resource : m_main_render_target_resources) {
         if (rt_resource) {
-            // rt_resource->Release();
-            rt_resource = nullptr;
+            rt_resource.Reset();
         }
     }
 }
