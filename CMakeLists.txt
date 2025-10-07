@@ -20,6 +20,7 @@ set(im_app_dir_private_header_dir "${im_app_dir}/interfaces")
 set(im_app_public_files
     "${public_dir}/im_app/layer.h"
     "${public_dir}/im_app/application.h"
+    "${public_dir}/im_app/file_system.h"
 )
 
 set(im_app_private_files
@@ -34,6 +35,7 @@ set(im_app_platform_specific_files)
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     set(im_app_platform_dir "${im_app_dir}/platforms/win32")
     list(APPEND im_app_platform_specific_files
+        "${im_app_platform_dir}/win32_file_system.cpp"
         "${im_app_platform_dir}/wgl_context.h"
         "${im_app_platform_dir}/wgl_context.cpp"
         "${im_app_platform_dir}/win32_window.h"
