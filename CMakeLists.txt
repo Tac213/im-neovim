@@ -15,7 +15,7 @@ endif()
 
 set(public_dir "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(im_app_dir "${CMAKE_CURRENT_SOURCE_DIR}/src/im_app")
-set(im_app_dir_private_header_dir "${im_app_dir}/interfaces")
+set(im_app_private_header_dir "${im_app_dir}/interfaces")
 
 set(im_app_public_files
     "${public_dir}/im_app/layer.h"
@@ -24,9 +24,9 @@ set(im_app_public_files
 )
 
 set(im_app_private_files
-    "${im_app_dir_private_header_dir}/im_app/graphics_context.h"
-    "${im_app_dir_private_header_dir}/im_app/imgui_renderer.h"
-    "${im_app_dir_private_header_dir}/im_app/window.h"
+    "${im_app_private_header_dir}/im_app/graphics_context.h"
+    "${im_app_private_header_dir}/im_app/imgui_renderer.h"
+    "${im_app_private_header_dir}/im_app/window.h"
     "${im_app_dir}/application.cpp"
 )
 
@@ -78,7 +78,7 @@ target_include_directories(
     PUBLIC
     "${public_dir}"
     PRIVATE
-    "${im_app_dir_private_header_dir}"
+    "${im_app_private_header_dir}"
 )
 
 target_link_libraries(
@@ -118,8 +118,10 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 endif()
 
 set(im_neovim_dir "${CMAKE_CURRENT_SOURCE_DIR}/src/im_neovim")
+set(im_neovim_private_header_dir "${im_neovim_dir}/include")
 
 set(im_neovim_private_files
+    "${im_neovim_private_header_dir}/im_neovim/logging.h"
     "${im_neovim_dir}/im_neovim_app.cpp"
 )
 
@@ -133,6 +135,18 @@ target_link_libraries(
     PRIVATE
     ImApp::ImApp
 )
+
+target_include_directories(
+    im_neovim
+    PRIVATE
+    ${im_neovim_private_header_dir}
+)
+
+if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    target_compile_definitions(im_neovim PRIVATE
+        IM_NVIM_DEBUG=1
+    )
+endif()
 
 if(${CMAKE_BUILD_TYPE} STREQUAL "Release")
     target_compile_definitions(im_app PRIVATE

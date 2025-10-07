@@ -10,6 +10,12 @@ if(NOT TARGET spdlog)
     option(SPDLOG_BUILD_EXAMPLE "" OFF)
     option(SPDLOG_INSTALL "" OFF)
     option(SPDLOG_FMT_EXTERNAL "" ON)
+
+    if(WIN32)
+        option(SPDLOG_WCHAR_SUPPORT "" ON)
+        option(SPDLOG_WCHAR_FILENAMES "" ON)
+    endif()
+
     set(CMAKE_POSITION_INDEPENDENT_CODE 1)
     add_subdirectory(spdlog)
     set_target_properties(spdlog PROPERTIES FOLDER ${third_party_folder}/spdlog)
