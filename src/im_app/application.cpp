@@ -2,10 +2,15 @@
 #include "im_app/graphics_context.h"
 #include "im_app/imgui_renderer.h"
 #include "im_app/window.h"
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 #include <stdexcept>
 
 namespace ImApp {
 Application* Application::_s_application = nullptr;
+
+static void initialize_spdlog();
+static void finalize_spdlog();
 
 Application::Application(const AppSpec& app_spec)
     : m_app_spec(app_spec), m_is_running(true) {
@@ -44,6 +49,7 @@ int Application::exec() {
 void Application::exit() { m_is_running = false; }
 
 void Application::_initialize() {
+    initialize_spdlog();
     WindowProps window_props = {m_app_spec.name, m_app_spec.main_window_width,
                                 m_app_spec.main_window_height,
                                 m_app_spec.main_window_no_border};
@@ -71,5 +77,30 @@ void Application::_finalize() {
     m_graphics_context.reset();
     m_window.reset();
     m_is_running = false;
+    finalize_spdlog();
+}
+
+void initialize_spdlog() {
+    spdlog::flush_every(std::chrono::seconds(5));
+    auto stdout_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+#if defined(IM_APP_DEBUG)
+    stdout_sink->set_level(spdlog::level::debug);
+#else
+    stdout_sink->set_level(spdlog::level::info);
+#endif
+#if !defined(_WIN32)
+    stdout_sink->set_color(spdlog::level::warn, stdout_sink->yellow);
+    stdout_sink->set_color(spdlog::level::err, stdout_sink->red);
+#endif
+    std::vector<spdlog::sink_ptr> sinks{stdout_sink};
+    auto logger =
+        std::make_shared<spdlog::logger>("ImApp", sinks.begin(), sinks.end());
+    spdlog::set_default_logger(logger);
+}
+
+void finalize_spdlog() {
+    spdlog::apply_all(
+        [](std::shared_ptr<spdlog::logger> logger) { logger->flush(); });
+    spdlog::drop_all();
 }
 } // namespace ImApp

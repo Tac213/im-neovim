@@ -1,4 +1,5 @@
 #include "glfw_context.h"
+#include <spdlog/spdlog.h>
 
 namespace ImApp {
 #if defined(IM_APP_DEBUG)
@@ -7,7 +8,7 @@ static void GLAPIENTRY debug_callback(GLenum source, GLenum type, GLuint id,
                                       const GLchar* message,
                                       const void* user_param) {
     if (type == GL_DEBUG_TYPE_ERROR) {
-        fprintf(stderr, "GL Error: %s\n", message);
+        spdlog::error("GL Error: {}", message);
     }
 }
 #endif
@@ -34,10 +35,10 @@ void GlfwContext::initialize() {
     const GLubyte* gl_version_string = glGetString(GL_VERSION);
     const GLubyte* gl_renderer = glGetString(GL_RENDERER);
 
-    fprintf(stdout, "OpenGL is intialized, version: %d.%d context(%s, %s)\n",
-            m_major_version, m_minor_version,
-            reinterpret_cast<const char*>(gl_version_string),
-            reinterpret_cast<const char*>(gl_renderer));
+    spdlog::info("OpenGL is intialized, version: {}.{} context({}, {})",
+                 m_major_version, m_minor_version,
+                 reinterpret_cast<const char*>(gl_version_string),
+                 reinterpret_cast<const char*>(gl_renderer));
 
     if (m_major_version >= 4 && m_minor_version >= 3) {
         glEnable(GL_DEBUG_OUTPUT);

@@ -84,6 +84,7 @@ target_include_directories(
 target_link_libraries(
     im_app
     PUBLIC
+    spdlog::spdlog
     imgui
     PRIVATE
     GLEW::glew

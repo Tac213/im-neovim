@@ -4,6 +4,7 @@
 #if defined(IM_APP_DEBUG)
 #include <dxgidebug.h>
 #endif
+#include <spdlog/spdlog.h>
 
 namespace ImApp {
 #if defined(IM_APP_DEBUG)
@@ -13,19 +14,19 @@ static void debug_message_callback(D3D12_MESSAGE_CATEGORY category,
                                    const char* description, void* context) {
     switch (severity) {
     case D3D12_MESSAGE_SEVERITY_CORRUPTION:
-        fprintf(stderr, "[D3D12 CORRUPTION] %s\n", description);
+        spdlog::critical("[D3D12 CORRUPTION] {}", description);
         break;
     case D3D12_MESSAGE_SEVERITY_ERROR:
-        fprintf(stderr, "[D3D12 ERROR] %s\n", description);
+        spdlog::error("[D3D12 ERROR] {}", description);
         break;
     case D3D12_MESSAGE_SEVERITY_WARNING:
-        fprintf(stderr, "[D3D12 WARNING] %s\n", description);
+        spdlog::warn("[D3D12 WARNING] {}", description);
         break;
     case D3D12_MESSAGE_SEVERITY_INFO:
-        fprintf(stdout, "[D3D12 INFO] %s\n", description);
+        spdlog::info("[D3D12 INFO] {}", description);
         break;
     case D3D12_MESSAGE_SEVERITY_MESSAGE:
-        fprintf(stdout, "[D3D12 MESSAGE] %s\n", description);
+        spdlog::trace("[D3D12 MESSAGE] {}", description);
         break;
     }
 }

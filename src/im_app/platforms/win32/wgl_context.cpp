@@ -1,6 +1,7 @@
 #include "wgl_context.h"
 #include "win32_window.h"
 #include <GL/glew.h>
+#include <spdlog/spdlog.h>
 #include <stdexcept>
 
 namespace ImApp {
@@ -10,7 +11,7 @@ static void GLAPIENTRY debug_callback(GLenum source, GLenum type, GLuint id,
                                       const GLchar* message,
                                       const void* user_param) {
     if (type == GL_DEBUG_TYPE_ERROR) {
-        fprintf(stderr, "WGL Error: %s\n", message);
+        spdlog::error("WGL Error: {}", message);
     }
 }
 #endif
@@ -43,10 +44,10 @@ void WGLContext::initialize() {
     const GLubyte* gl_version_string = glGetString(GL_VERSION);
     const GLubyte* gl_renderer = glGetString(GL_RENDERER);
 
-    fprintf(stdout, "OpenGL is intialized, version: %d.%d context(%s, %s)\n",
-            m_major_version, m_minor_version,
-            reinterpret_cast<const char*>(gl_version_string),
-            reinterpret_cast<const char*>(gl_renderer));
+    spdlog::info("OpenGL is intialized, version: {}.{} context({}, {})\n",
+                 m_major_version, m_minor_version,
+                 reinterpret_cast<const char*>(gl_version_string),
+                 reinterpret_cast<const char*>(gl_renderer));
 
     if (m_major_version >= 4 && m_minor_version >= 3) {
         glEnable(GL_DEBUG_OUTPUT);
@@ -73,15 +74,11 @@ bool WGLContext::create_device(HWND hwnd, HDC& hdc) {
 
     const int pf = ::ChoosePixelFormat(temp_hdc, &pfd);
     if (pf == 0) {
-#if defined(_DEBUG)
-        fprintf(stderr, "[WGLContext] Failed to choose pixel format.\n");
-#endif
+        spdlog::error("[WGLContext] Failed to choose pixel format.");
         return false;
     }
     if (::SetPixelFormat(temp_hdc, pf, &pfd) == FALSE) {
-#if defined(_DEBUG)
-        fprintf(stderr, "[WGLContext] Failed to set pixel format.\n");
-#endif
+        spdlog::error("[WGLContext] Failed to set pixel format.");
         return false;
     }
     ::ReleaseDC(hwnd, temp_hdc);

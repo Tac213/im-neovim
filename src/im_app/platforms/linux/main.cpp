@@ -1,19 +1,18 @@
 #include "im_app/application.h"
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+#include <spdlog/spdlog.h>
 
 #if defined(IM_APP_DEBUG)
 static void glfw_error_callback(int error, const char* description) {
-    fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+    spdlog::error("GLFW Error {}: {}", error, description);
 }
 #endif
 
 int main(int argc, char** argv) {
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {
-#if defined(IM_APP_DEBUG)
-        fprintf(stderr, "Failed to initialize glfw!\n");
-#endif
+        spdlog::error("Failed to initialize glfw!");
         return 1;
     }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);

@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_win32.h>
+#include <spdlog/spdlog.h>
 
 namespace ImApp {
 Win32OpenGLImGuiRenderer::Win32OpenGLImGuiRenderer() { _initialize(); }
@@ -105,10 +106,8 @@ void Win32OpenGLImGuiRenderer::
         IM_ASSERT(platform_io.Platform_RenderWindow == nullptr);
         platform_io.Renderer_CreateWindow = [](ImGuiViewport* viewport) {
             if (viewport->RendererUserData != nullptr) {
-#if defined(_DEBUG)
-                fprintf(stderr,
-                        "ImGuiViewport->RendererUserData is not nullptr!!!\n");
-#endif
+                spdlog::error(
+                    "ImGuiViewport->RendererUserData is not nullptr!!!");
                 return;
             }
             WGLWindowData* data = IM_NEW(WGLWindowData);
