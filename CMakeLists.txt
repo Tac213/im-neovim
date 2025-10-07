@@ -55,6 +55,7 @@ endif()
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     set(im_app_platform_dir "${im_app_dir}/platforms/linux")
     list(APPEND im_app_platform_specific_files
+        "${im_app_platform_dir}/linux_file_system.cpp"
         "${im_app_platform_dir}/glfw_window.h"
         "${im_app_platform_dir}/glfw_window.cpp"
         "${im_app_platform_dir}/glfw_context.h"
