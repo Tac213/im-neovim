@@ -122,7 +122,9 @@ set(im_neovim_private_header_dir "${im_neovim_dir}/include")
 
 set(im_neovim_private_files
     "${im_neovim_private_header_dir}/im_neovim/logging.h"
+    "${im_neovim_private_header_dir}/im_neovim/gui/terminal.h"
     "${im_neovim_dir}/im_neovim_app.cpp"
+    "${im_neovim_dir}/gui/terminal.cpp"
 )
 
 add_executable(im_neovim
