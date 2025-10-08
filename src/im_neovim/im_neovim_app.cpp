@@ -41,6 +41,11 @@ static void initialize_logger() {
     std::vector<spdlog::sink_ptr> sinks{stdout_sink, file_sink};
     auto logger = std::make_shared<spdlog::logger>(IM_NVIM_LOGGER_NAME,
                                                    sinks.begin(), sinks.end());
+#if defined(IM_NVIM_DEBUG)
+    logger->set_level(spdlog::level::debug);
+#else
+    logger->set_level(spdlog::level::info);
+#endif
     spdlog::register_logger(logger);
 }
 } // namespace ImNeovim

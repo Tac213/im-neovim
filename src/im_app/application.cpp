@@ -95,6 +95,11 @@ void initialize_spdlog() {
     std::vector<spdlog::sink_ptr> sinks{stdout_sink};
     auto logger =
         std::make_shared<spdlog::logger>("ImApp", sinks.begin(), sinks.end());
+#if defined(IM_APP_DEBUG)
+    logger->set_level(spdlog::level::debug);
+#else
+    logger->set_level(spdlog::level::info);
+#endif
     spdlog::set_default_logger(logger);
 }
 
