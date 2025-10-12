@@ -147,10 +147,23 @@ class Terminal {
     bool selected_text(int x, int y);
 
   private:
+    enum Charset {
+        CharsetGraphiC0,
+        CharsetUk,
+        CharsetUsa,
+        CharsetMulti,
+        CharsetGer,
+        CharsetFin
+    };
     void _start_shell();
     void _read_output();
 
     void _write_to_buffer(const char* data, size_t length);
+    void _write_char(Rune u);
+    void _write_glyph(const Glyph& g, int x, int y);
+
+    // Utility functions
+    void _reset();
 
     // Render helper functions
     void _check_font_size_changed();
@@ -178,12 +191,56 @@ class Terminal {
     static void _handle_glyph_colors(const Glyph& glyph, ImVec4& fg,
                                      ImVec4& bg);
 
+    // Terminal operations
+    void _clear_region(int x1, int y1, int x2, int y2);
+    void _scroll_up(int orig, int n);
+    void _scroll_down(int orig, int n);
+    void _move_to(int x, int y);
+    void _set_mode(bool set, int mode);
+
+    void _tnewline(int first_col);
+    void _tstrsequence(uchar c);
+    void _tmoveto(int x, int y);
+    void _tmoveato(int x, int y); // Absolute move with origin mode
+    void _tputtab(int n);
+    void _tsetmode(int priv, int set, const std::vector<int>& args);
+
+    void _cursor_save();
+    void _cursor_load();
+
+    void _add_to_scrollback(const std::vector<Glyph>& line);
+
+    struct CSIEscape {
+        char buf[256];         // Raw string
+        size_t len;            // Raw string length
+        char priv;             // Private mode
+        std::vector<int> args; // Arguments
+        char mode[2];          // Final character(s)
+    };
+
+    static void _parse_csi_param(CSIEscape& csi);
+    void _handle_csi(const CSIEscape& csi);
+
+    // Sequence handling
+    void _handle_sgr(const std::vector<int>& args);
+    void _handle_control_code(uchar c);
+
+    int _eschandle(uchar ascii);
+    void _handle_dcs() const; // DSC - Device Control String
+    void _selection_normalize();
+    void _strparse();
+    void _handle_string_sequence();
+    // OSC - Operating System Command
+    void _handle_osc_color(const std::vector<std::string>& args) const;
+    void _handle_osc_selection(const std::vector<std::string>& args);
+
+    void _ring_bell();
+
     // UTF-8 handling
     static size_t _utf8_decode(const char* c, Rune* u, size_t clen);
     static size_t _utf8_encode(Rune u, char* c);
 
-    static constexpr const unsigned char g_utfmask[5] = {0xC0, 0x80, 0xE0, 0xF0,
-                                                         0xF8};
+    static constexpr const uchar g_utfmask[5] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
     static constexpr const Rune g_utfmin[5] = {0, 0, 0x80, 0x800, 0x10000};
     static constexpr const Rune g_utfmax[5] = {0x10FFFF, 0x7F, 0x7FF, 0xFFFF,
                                                0x10FFFF};
@@ -230,9 +287,36 @@ class Terminal {
 
     float m_last_font_size = 0;
 
+    TCursor m_saved_cursor; // For cursor save/restore
+
     std::vector<std::vector<Glyph>> m_scrollback_buffer;
     size_t m_max_scrollback_lines = 10000;
     int m_scroll_offset = 0;
+
+    CSIEscape m_csiescseq;
+    STREscape m_strescseq;
+
+    ImVec4 m_default_color_map[16] = {
+        // Standard colors
+        ImVec4(0.0f, 0.0f, 0.0f, 1.0f), // Black
+        ImVec4(0.8f, 0.2f, 0.2f, 1.0f), // Rich Red
+        ImVec4(0.2f, 0.8f, 0.2f, 1.0f), // Vibrant Green
+        ImVec4(0.9f, 0.9f, 0.3f, 1.0f), // Sunny Yellow
+        ImVec4(0.2f, 0.5f, 1.0f, 1.0f), // Sky Blue (brighter blue)
+        ImVec4(0.8f, 0.3f, 0.8f, 1.0f), // Electric Purple
+        ImVec4(0.3f, 0.8f, 0.8f, 1.0f), // Aqua Cyan
+        ImVec4(0.9f, 0.9f, 0.9f, 1.0f), // Off-White
+
+        // Bright colors (pastel-like but still vibrant)
+        ImVec4(0.5f, 0.5f, 0.5f, 1.0f), // Medium Gray
+        ImVec4(1.0f, 0.4f, 0.4f, 1.0f), // Coral Red
+        ImVec4(0.4f, 1.0f, 0.4f, 1.0f), // Lime Green
+        ImVec4(1.0f, 1.0f, 0.6f, 1.0f), // Lemon Yellow
+        ImVec4(0.4f, 0.6f, 1.0f, 1.0f), // Bright Sky Blue
+        ImVec4(1.0f, 0.5f, 1.0f, 1.0f), // Pink Purple
+        ImVec4(0.5f, 1.0f, 1.0f, 1.0f), // Ice Blue
+        ImVec4(1.0f, 1.0f, 1.0f, 1.0f)  // Pure White
+    };
 
     const std::unordered_map<Rune, Rune> m_box_drawing_chars = {
         // Basic box drawing - map proper Unicode box chars to themselves

@@ -12,9 +12,14 @@
 #include <termios.h>
 #include <unistd.h>
 #endif
+#include <fmt/ranges.h>
 
 namespace ImNeovim {
 #define BETWEEN(x, a, b) ((a) <= (x) && (x) <= (b))
+#define MODBIT(x, set, bit) ((set) ? ((x) |= (bit)) : ((x) &= ~(bit)))
+#define ISCONTROLC0(c) (BETWEEN(c, 0, 0x1f) || (c) == 0x7f)
+#define ISCONTROLC1(c) (BETWEEN(c, 0x80, 0x9f))
+#define ISCONTROL(c) (ISCONTROLC0(c) || ISCONTROLC1(c))
 
 Terminal::Terminal() : m_window_title("Terminal") {
     // Initialize with safe default size
@@ -441,7 +446,251 @@ void Terminal::_read_output() {
     }
 }
 
-void Terminal::_write_to_buffer(const char* data, size_t length) {}
+void Terminal::_write_to_buffer(const char* data, size_t length) {
+    static char utf8buf[g_utf_size];
+    static size_t utf8len = 0;
+
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = data[i];
+
+        // Existing STR sequence handling
+        if (m_state.esc & EscStr) {
+            if (c == '\a' || c == 030 || c == 032 || c == 033 ||
+                ISCONTROLC1(c)) {
+                m_state.esc &= ~(EscStart | EscStr);
+                m_state.esc |= EscStrEnd;
+                _strparse();
+                _handle_string_sequence();
+                m_state.esc = 0;
+                continue;
+            }
+
+            if (m_strescseq.len < 256) {
+                m_strescseq.buf += c;
+                m_strescseq.len++;
+            }
+            continue;
+        }
+
+        // Escape sequence start
+        if (c == '\033') {
+            m_state.esc = EscStart;
+            m_csiescseq.len = 0;
+            m_strescseq.buf.clear();
+            m_strescseq.len = 0;
+            utf8len = 0; // Reset UTF-8 buffer
+            continue;
+        }
+
+        // Control character handling
+        if (ISCONTROL(c)) {
+            utf8len = 0; // Reset UTF-8 buffer
+            _handle_control_code(c);
+            continue;
+        }
+
+        // Ongoing escape sequence processing
+        if (m_state.esc & EscStart) {
+            if (m_state.esc & EscCsi) {
+                if (m_csiescseq.len < sizeof(m_csiescseq.buf) - 1) {
+                    m_csiescseq.buf[m_csiescseq.len++] = c;
+                    if (BETWEEN(c, 0x40, 0x7E)) {
+                        m_csiescseq.buf[m_csiescseq.len] = '\0';
+                        m_csiescseq.mode[0] = c;
+                        _parse_csi_param(m_csiescseq);
+                        _handle_csi(m_csiescseq);
+                        m_state.esc = 0;
+                        m_csiescseq.len = 0;
+                    }
+                }
+                continue;
+            }
+
+            if (_eschandle(c)) {
+                m_state.esc = 0;
+            }
+            continue;
+        }
+
+        if (m_state.mode & ModeUtf8) {
+            if (utf8len == 0) {
+                if ((c & 0x80) == 0) {
+                    _write_char(c);
+                } else if ((c & 0xE0) == 0xC0 || // 2-byte start
+                           (c & 0xF0) == 0xE0 || // 3-byte start
+                           (c & 0xF8) == 0xF0) { // 4-byte start
+                    utf8buf[utf8len++] = c;
+
+                    // If it's a 3-byte sequence (box drawing characters),
+                    // we want to immediately look for the next two bytes
+                    if ((c & 0xF0) == 0xE0) {
+                        // Look ahead for the next two bytes
+                        if (i + 2 < length) {
+                            utf8buf[utf8len++] = data[i + 1];
+                            utf8buf[utf8len++] = data[i + 2];
+
+                            Rune u;
+                            size_t decoded = _utf8_decode(utf8buf, &u, utf8len);
+                            if (decoded > 0) {
+                                _write_char(u);
+                            }
+
+                            // Skip the next two bytes since we've processed
+                            // them
+                            i += 2;
+                            utf8len = 0;
+                        }
+                    }
+                } else {
+                    // Unexpected start byte
+                    utf8buf[utf8len++] = c;
+                    utf8buf[utf8len] = '\0';
+                    _write_char(0xFFFD);
+                }
+            } else {
+                // This block is now less likely to be used due to the changes
+                // above
+                if ((c & 0xC0) == 0x80) {
+                    utf8buf[utf8len++] = c;
+
+                    size_t expected_len = ((utf8buf[0] & 0xE0) == 0xC0)   ? 2
+                                          : ((utf8buf[0] & 0xF0) == 0xE0) ? 3
+                                          : ((utf8buf[0] & 0xF8) == 0xF0) ? 4
+                                                                          : 0;
+
+                    if (utf8len == expected_len) {
+                        Rune u;
+                        size_t decoded = _utf8_decode(utf8buf, &u, utf8len);
+                        if (decoded > 0) {
+                            _write_char(u);
+                        }
+                        utf8len = 0;
+                    }
+                } else {
+                    LOG_ERROR("Invalid continuation byte: 0x{:x}",
+                              static_cast<int>(c));
+                    utf8len = 0;
+                }
+            }
+        } else {
+            _write_char(c);
+        }
+    }
+}
+
+void Terminal::_write_char(Rune u) {
+    auto it = m_box_drawing_chars.find(u);
+    if (it != m_box_drawing_chars.end()) {
+        u = it->second;
+    } else {
+        // Log unmapped characters
+        if (u >= 0x2500 && u <= 0x257F) {
+            // LOG_ERROR("Unmapped box drawing character: U+{:x}", u);
+        }
+    }
+
+    if (m_state.c.x >= m_state.col) {
+        // Set wrap flag on current line before moving to next
+        if (m_state.c.y < m_state.row && m_state.c.x > 0) {
+            m_state.lines[m_state.c.y][m_state.c.x - 1].mode |= AttrWrap;
+        }
+
+        m_state.c.x = 0;
+        if (m_state.c.y == m_state.bot) {
+            _scroll_up(m_state.top, 1);
+        } else if (m_state.c.y < m_state.row - 1) {
+            m_state.c.y++;
+        }
+    }
+
+    Glyph g;
+    g.u = u;
+    g.mode = m_state.c.attrs;
+    g.fg = m_state.c.fg;
+    g.bg = m_state.c.bg;
+    g.color_mode = m_state.c.color_mode;
+    g.true_color_fg = m_state.c.true_color_fg;
+    g.true_color_bg = m_state.c.true_color_bg;
+
+    // Set wrap flag if at end of line
+    if (m_state.c.x == m_state.col - 1) {
+        g.mode |= AttrWrap;
+    }
+
+    _write_glyph(g, m_state.c.x, m_state.c.y);
+    m_state.c.x++;
+}
+
+void Terminal::_write_glyph(const Glyph& g, int x, int y) {
+    if (x >= m_state.col || y >= m_state.row || x < 0 || y < 0) {
+        return;
+    }
+
+    Glyph& cell = m_state.lines[y][x];
+    cell = g;
+
+    // Ensure we properly handle attribute clearing
+    if (!(g.mode &
+          (AttrReverse | AttrBold | AttrItalic | AttrBlink | AttrUnderline))) {
+        cell.mode &=
+            ~(AttrReverse | AttrBold | AttrItalic | AttrBlink | AttrUnderline);
+    }
+
+    cell.mode = (cell.mode & ~(AttrReverse | AttrBold | AttrItalic | AttrBlink |
+                               AttrUnderline)) |
+                (g.mode & (AttrReverse | AttrBold | AttrItalic | AttrBlink |
+                           AttrUnderline));
+
+    cell.color_mode = g.color_mode;
+
+    if (cell.mode & AttrReverse) {
+        cell.fg = m_state.c.bg;
+        cell.bg = m_state.c.fg;
+        cell.true_color_fg = m_state.c.true_color_bg;
+        cell.true_color_bg = m_state.c.true_color_fg;
+    } else {
+        cell.fg = m_state.c.fg;
+        cell.bg = m_state.c.bg;
+        cell.true_color_fg = m_state.c.true_color_fg;
+        cell.true_color_bg = m_state.c.true_color_bg;
+    }
+
+    // Handle bold attribute affecting colors
+    if (cell.mode & AttrBold && cell.color_mode == ColorBasic) {
+        // Make the color brighter for bold text
+        if (cell.true_color_fg < 0x8) { // If using standard colors
+            cell.fg = m_default_color_map[cell.true_color_fg +
+                                          8]; // Use bright version
+        }
+    }
+    if (cell.mode & AttrWide && x + 1 < m_state.col) {
+        Glyph& next_cell = m_state.lines[y][x + 1];
+        next_cell.u = ' ';
+        next_cell.mode = AttrWdummy;
+        // Copy color/attrs from base cell
+        next_cell.fg = cell.fg;
+        next_cell.bg = cell.bg;
+    }
+
+    m_state.dirty[y] = true;
+}
+
+void Terminal::_reset() {
+    // Reset terminal to initial state
+    m_state.mode = ModeWrap | ModeUtf8;
+    m_state.c = {}; // Reset cursor
+    m_state.charset = 0;
+
+    // Reset character set translation table
+    for (char& i : m_state.trantbl) {
+        i = CharsetUsa;
+    }
+
+    // Clear screen and reset color/attributes
+    _clear_region(0, 0, m_state.col - 1, m_state.row - 1);
+    m_state.c.fg = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    m_state.c.bg = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+}
 
 void Terminal::_check_font_size_changed() {
     float current_font_size = ImGui::GetFontBaked()->Size;
@@ -739,6 +988,1123 @@ void Terminal::_handle_glyph_colors(const Glyph& glyph, ImVec4& fg,
         fg.x = std::min(1.0f, fg.x * 1.5f);
         fg.y = std::min(1.0f, fg.y * 1.5f);
         fg.z = std::min(1.0f, fg.z * 1.5f);
+    }
+}
+
+void Terminal::_clear_region(int x1, int y1, int x2, int y2) {
+    int temp;
+    if (x1 > x2) {
+        temp = x1;
+        x1 = x2;
+        x2 = temp;
+    }
+    if (y1 > y2) {
+        temp = y1;
+        y1 = y2;
+        y2 = temp;
+    }
+
+    // Constrain to terminal size
+    x1 = std::max(0, std::min(x1, m_state.col - 1));
+    x2 = std::max(0, std::min(x2, m_state.col - 1));
+    y1 = std::max(0, std::min(y1, m_state.row - 1));
+    y2 = std::max(0, std::min(y2, m_state.row - 1));
+
+    // Clear the cells and properly reset attributes
+    for (int y = y1; y <= y2; y++) {
+        for (int x = x1; x <= x2; x++) {
+            Glyph& g = m_state.lines[y][x];
+            g.u = ' ';
+            g.mode = m_state.c.attrs & ~(AttrReverse | AttrBold | AttrItalic |
+                                         AttrBlink | AttrUnderline);
+            g.fg = m_state.c.fg;
+            g.bg = m_state.c.bg;
+            g.color_mode = m_state.c.color_mode;
+            g.true_color_fg = m_state.c.true_color_fg;
+            g.true_color_bg = m_state.c.true_color_bg;
+        }
+        m_state.dirty[y] = true;
+    }
+}
+
+void Terminal::_move_to(int x, int y) {
+    int miny, maxy;
+
+    // Get scroll region bounds
+    if (m_state.c.state & CursorOrigin) {
+        miny = m_state.top;
+        maxy = m_state.bot;
+    } else {
+        miny = 0;
+        maxy = m_state.row - 1;
+    }
+
+    int oldx = m_state.c.x;
+    int oldy = m_state.c.y;
+
+    // Constrain cursor position
+    m_state.c.x = std::clamp(x, 0, m_state.col - 1);
+    m_state.c.y = std::clamp(y, miny, maxy);
+
+    // Reset wrap flag if moved
+    if (oldx != m_state.c.x || oldy != m_state.c.y) {
+        m_state.c.state &= ~CursorWrapnext;
+    }
+
+    // Handle wrap-next state when moving to end of line
+    if (m_state.c.x == m_state.col - 1) {
+        m_state.c.state |= CursorWrapnext;
+    }
+}
+
+void Terminal::_scroll_up(int orig, int n) {
+    if (orig < 0 || orig >= m_state.row) {
+        return;
+    }
+    if (n <= 0) {
+        return;
+    }
+
+    n = std::min(n, m_state.bot - orig + 1);
+    n = std::max(n, 0);
+
+    // Add scrolled lines to scrollback when not in alt screen
+    if (!(m_state.mode & ModeAltscreen)) {
+        for (int i = orig; i < orig + n; ++i) {
+            if (i < m_state.lines.size()) {
+                _add_to_scrollback(m_state.lines[i]);
+            }
+        }
+    }
+
+    // Existing scroll handling...
+    for (int y = orig; y <= m_state.bot - n; ++y) {
+        m_state.lines[y] = std::move(m_state.lines[y + n]);
+    }
+
+    // Clear revealed lines
+    for (int i = m_state.bot - n + 1; i <= m_state.bot && i < m_state.row;
+         i++) {
+        m_state.lines[i].resize(m_state.col);
+        for (int j = 0; j < m_state.col; j++) {
+            Glyph& g = m_state.lines[i][j];
+            g.u = ' ';
+            g.mode = m_state.c.attrs;
+            g.fg = m_state.c.fg;
+            g.bg = m_state.c.bg;
+        }
+    }
+}
+
+void Terminal::_scroll_down(int orig, int n) {
+    if (orig < 0 || orig >= m_state.row) {
+        return; // Safety check
+    }
+    if (n <= 0) {
+        return;
+    }
+
+    n = std::min(n, m_state.bot - orig + 1);
+    n = std::max(n, 0);
+
+    if (orig + n > m_state.row) {
+        return;
+    }
+
+    // Mark lines as dirty
+    for (int i = orig; i <= m_state.bot && i < m_state.row; i++) {
+        m_state.dirty[i] = true;
+    }
+
+    // Move lines down with bounds checking
+    for (int i = m_state.bot; i >= orig + n && i < m_state.row; i--) {
+        m_state.lines[i] = std::move(m_state.lines[i - n]);
+    }
+
+    // Clear new lines
+    for (int i = orig; i < orig + n && i < m_state.row; i++) {
+        m_state.lines[i].resize(m_state.col);
+        for (int j = 0; j < m_state.col; j++) {
+            Glyph& g = m_state.lines[i][j];
+            g.u = ' ';
+            g.mode = m_state.c.attrs;
+            g.fg = m_state.c.fg;
+            g.bg = m_state.c.bg;
+        }
+    }
+}
+
+void Terminal::_set_mode(bool set, int mode) {
+    if (mode == ModeAppcursor) {
+        LOG_INFO("ModeAppcursor {}.", set ? "enabled" : "disabled");
+    }
+    if (set) {
+        m_state.mode |= mode;
+    } else {
+        m_state.mode &= ~mode;
+    }
+    switch (mode) {
+    case 6: // DECOM -- Origin Mode
+        MODBIT(m_state.c.state, set, CursorOrigin);
+        if (set) {
+            _move_to(0, m_state.top);
+        }
+        break;
+
+    case ModeWrap:
+        // Line wrapping mode
+        break;
+    case ModeInsert:
+        // Toggle insert mode
+        break;
+    case ModeAltscreen:
+        if (set) {
+            m_state.alt_lines.swap(m_state.lines);
+            m_state.mode |= ModeAltscreen;
+            m_scroll_offset = 0; // Reset scroll on entering alt screen
+        } else {
+            m_state.alt_lines.swap(m_state.lines);
+            m_state.mode &= ~ModeAltscreen;
+            m_scroll_offset = 0; // Reset scroll on exiting alt screen
+        }
+        std::fill(m_state.dirty.begin(), m_state.dirty.end(), true);
+        break;
+    case ModeCrlf:
+        // Change line feed behavior
+        break;
+    case ModeEcho:
+        // Local echo mode
+        break;
+    }
+}
+
+void Terminal::_tnewline(int first_col) {
+    int y = m_state.c.y;
+
+    if (y == m_state.bot) {
+        _scroll_up(m_state.top, 1);
+    } else {
+        y++;
+    }
+    _move_to(first_col ? 0 : m_state.c.x, y);
+}
+
+void Terminal::_tstrsequence(uchar c) {
+    // Handle different string sequences more comprehensively
+    switch (c) {
+    case 0x90: // DCS - Device Control String
+    case 0x9d: // OSC - Operating System Command
+    case 0x9e: // PM - Privacy Message
+    case 0x9f: // APC - Application Program Command
+        // TODO: Implement full handling of these sequences
+        // This may involve buffering and processing multi-character sequences
+        m_state.esc |= EscStr;
+        break;
+    }
+}
+
+void Terminal::_tmoveto(int x, int y) {
+    _move_to(x, y); // Use the existing _move_to method
+}
+
+void Terminal::_tmoveato(int x, int y) {
+    // Origin mode moves relative to scroll region
+    if (m_state.c.state & CursorOrigin) {
+        _move_to(x, y + m_state.top);
+    } else {
+        _move_to(x, y);
+    }
+}
+
+void Terminal::_tputtab(int n) {
+    int x = m_state.c.x;
+
+    if (n > 0) {
+        while (x < m_state.col && n--) {
+            // Find next tab stop
+            do {
+                x++;
+            } while (x < m_state.col && !m_state.tabs[x]);
+        }
+    } else if (n < 0) {
+        while (x > 0 && n++) {
+            // Find previous tab stop
+            do {
+                x--;
+            } while (x > 0 && !m_state.tabs[x]);
+        }
+    }
+
+    m_state.c.x = std::clamp(x, 0, m_state.col - 1);
+}
+
+void Terminal::_tsetmode(int priv, int set, const std::vector<int>& args) {
+    // Mode setting per st.c
+    int alt;
+
+    for (int arg : args) {
+        if (priv) {
+            switch (arg) {
+            case 1: // DECCKM -- Application cursor keys
+                _set_mode(set, ModeAppcursor);
+                break;
+            case 5: // DECSCNM -- Reverse video
+                // TODO: Implement screen reversal
+                break;
+            case 6: // DECOM -- Origin
+                MODBIT(m_state.c.state, set, CursorOrigin);
+                _tmoveato(0, 0);
+                break;
+            case 7: // DECAWM -- Auto wrap
+                if (set) {
+                    m_state.mode |= ModeWrap;
+                } else {
+                    m_state.mode &= ~ModeWrap;
+                }
+                break;
+            case 0: // Error (IGNORED)
+            case 2: // DECANM -- ANSI/VT52 (IGNORED)
+            case 3: // DECCOLM -- Column  (IGNORED)
+            case 4: // DECSCLM -- Scroll (IGNORED)
+            case 8: // DECARM -- Auto repeat (IGNORED)
+                break;
+            case 25: // DECTCEM -- Text Cursor Enable Mode
+                // Optional: handle cursor visibility
+                break;
+            case 47:   // swap screen
+            case 1047: // alternate screen
+            case 1049:
+                alt = (m_state.mode & ModeAltscreen) != 0;
+                if (set ^ alt) {
+                    m_state.alt_lines.swap(m_state.lines);
+                    m_state.mode ^= ModeAltscreen;
+                }
+            case 1048:
+                (set) ? _cursor_save() : _cursor_load();
+                break;
+            case 2004: // Bracketed paste mode
+                if (set) {
+                    m_state.mode |= ModeBracketpaste;
+                } else {
+                    m_state.mode &= ~ModeBracketpaste;
+                }
+                break;
+            }
+        } else {
+            switch (arg) {
+            case 4: // IRM -- Insertion-replacement
+                MODBIT(m_state.mode, set, ModeInsert);
+                break;
+            case 20: // LNM -- Linefeed/new line
+                MODBIT(m_state.mode, set, ModeCrlf);
+                break;
+            }
+        }
+    }
+}
+
+void Terminal::_cursor_save() { m_saved_cursor = m_state.c; }
+
+void Terminal::_cursor_load() {
+    m_state.c = m_saved_cursor;
+    _move_to(m_state.c.x, m_state.c.y);
+}
+
+void Terminal::_add_to_scrollback(const std::vector<Glyph>& line) {
+    m_scrollback_buffer.push_back(line);
+    if (m_scrollback_buffer.size() > m_max_scrollback_lines) {
+        m_scrollback_buffer.erase(m_scrollback_buffer.begin());
+    }
+}
+
+void Terminal::_parse_csi_param(CSIEscape& csi) {
+    char* p = csi.buf;
+    csi.args.clear();
+
+    // Check for private mode
+    if (*p == '?') {
+        csi.priv = 1;
+        p++;
+    } else {
+        csi.priv = 0;
+    }
+
+    // Parse arguments
+    while (p < csi.buf + csi.len) {
+        // Parse numeric parameter
+        int param = 0;
+        while (p < csi.buf + csi.len && BETWEEN(*p, '0', '9')) {
+            param = param * 10 + (*p - '0');
+            p++;
+        }
+        csi.args.push_back(param);
+
+        // Move to next parameter or end
+        if (*p == ';') {
+            p++;
+        } else {
+            break;
+        }
+    }
+}
+void Terminal::_handle_csi(const CSIEscape& csi) {
+    LOG_DEBUG("CSI sequece: '{}' args: {}", csi.mode[0],
+              fmt::join(csi.args, " "));
+
+    switch (csi.mode[0]) {
+    case '@': // ICH -- Insert <n> blank char
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+
+        for (int i = m_state.col - 1; i >= m_state.c.x + n; i--)
+            m_state.lines[m_state.c.y][i] = m_state.lines[m_state.c.y][i - n];
+
+        _clear_region(m_state.c.x, m_state.c.y, m_state.c.x + n - 1,
+                      m_state.c.y);
+    } break;
+
+    case 'A': // CUU -- Cursor <n> Up
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+
+        if (n < 1)
+            n = 1;
+        _move_to(m_state.c.x, m_state.c.y - n);
+    } break;
+
+    case 'B': // CUD -- Cursor <n> Down
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _move_to(m_state.c.x, m_state.c.y + n);
+    } break;
+    case 'e': // VPR -- Cursor <n> Down
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _move_to(m_state.c.x, m_state.c.y + n);
+    } break;
+
+    case 'c': // DA -- Device Attributes
+        if (csi.args.empty() || csi.args[0] == 0) {
+            // Respond with xterm-like capabilities including 2004 (bracketed
+            // paste)
+            process_input("\033[?2004;1;6c"); // Indicate xterm with bracketed
+                                              // paste support
+        }
+        break;
+
+    case 'C': // CUF -- Cursor <n> Forward
+    case 'a': // HPR -- Cursor <n> Forward
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _move_to(m_state.c.x + n, m_state.c.y);
+    } break;
+
+    case 'D': // CUB -- Cursor <n> Backward
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _move_to(m_state.c.x - n, m_state.c.y);
+    } break;
+
+    case 'E': // CNL -- Cursor <n> Down and first col
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _move_to(0, m_state.c.y + n);
+    } break;
+
+    case 'F': // CPL -- Cursor <n> Up and first col
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _move_to(0, m_state.c.y - n);
+    } break;
+
+    case 'g': // TBC -- Tabulation Clear
+        switch (csi.args.empty() ? 0 : csi.args[0]) {
+        case 0: // Clear current tab stop
+            m_state.tabs[m_state.c.x] = false;
+            break;
+        case 3: // Clear all tab stops
+            std::fill(m_state.tabs.begin(), m_state.tabs.end(), false);
+            break;
+        }
+        break;
+
+    case 'G': // CHA -- Cursor Character Absolute
+    case '`': // HPA -- Horizontal Position Absolute
+        if (!csi.args.empty()) {
+            _move_to(csi.args[0] - 1, m_state.c.y);
+        }
+        break;
+
+    case 'H': // CUP -- Move to <row> <col>
+    case 'f': // HVP
+    {
+        int row = csi.args.size() > 0 ? csi.args[0] : 1;
+        int col = csi.args.size() > 1 ? csi.args[1] : 1;
+        _tmoveato(col - 1, row - 1);
+    } break;
+
+    case 'I': // CHT -- Cursor Forward Tabulation <n>
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _tputtab(n);
+    } break;
+
+    case 'J': // ED -- Erase in Display
+        switch (csi.args.empty() ? 0 : csi.args[0]) {
+        case 0: // Below
+            _clear_region(m_state.c.x, m_state.c.y, m_state.col - 1,
+                          m_state.c.y);
+            if (m_state.c.y < m_state.row - 1) {
+                _clear_region(0, m_state.c.y + 1, m_state.col - 1,
+                              m_state.row - 1);
+            }
+            break;
+        case 1: // Above
+            _clear_region(0, 0, m_state.col - 1, m_state.c.y - 1);
+            _clear_region(0, m_state.c.y, m_state.c.x, m_state.c.y);
+            break;
+        case 2: // All
+            _clear_region(0, 0, m_state.col - 1, m_state.row - 1);
+            break;
+        }
+        break;
+
+    case 'K': // EL -- Erase in Line
+        switch (csi.args.empty() ? 0 : csi.args[0]) {
+        case 0: // Right
+            _clear_region(m_state.c.x, m_state.c.y, m_state.col - 1,
+                          m_state.c.y);
+            break;
+        case 1: // Left
+            _clear_region(0, m_state.c.y, m_state.c.x, m_state.c.y);
+            break;
+        case 2: // All
+            _clear_region(0, m_state.c.y, m_state.col - 1, m_state.c.y);
+            break;
+        }
+        break;
+
+    case 'L': // IL -- Insert <n> blank lines
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        if (BETWEEN(m_state.c.y, m_state.top, m_state.bot)) {
+            _scroll_down(m_state.c.y, n);
+        }
+    } break;
+
+    case 'M': // DL -- Delete <n> lines
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        if (BETWEEN(m_state.c.y, m_state.top, m_state.bot)) {
+            _scroll_up(m_state.c.y, n);
+        }
+    } break;
+
+    case 'P': // DCH -- Delete <n> char
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+
+        for (int i = m_state.c.x; i + n < m_state.col && i < m_state.col; i++) {
+            m_state.lines[m_state.c.y][i] = m_state.lines[m_state.c.y][i + n];
+        }
+
+        _clear_region(m_state.col - n, m_state.c.y, m_state.col - 1,
+                      m_state.c.y);
+    } break;
+
+    case 'S': // SU -- Scroll <n> lines up
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _scroll_up(m_state.top, n);
+    } break;
+
+    case 'T': // SD -- Scroll <n> lines down
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _scroll_down(m_state.top, n);
+    } break;
+
+    case 'X': // ECH -- Erase <n> char
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _clear_region(m_state.c.x, m_state.c.y, m_state.c.x + n - 1,
+                      m_state.c.y);
+    } break;
+    case 'Z': // CBT -- Cursor Backward Tabulation <n>
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        if (n < 1)
+            n = 1;
+        _tputtab(-n);
+    } break;
+
+    case 'd': // VPA -- Move to <row>
+    {
+        int n = csi.args.empty() ? 1 : csi.args[0];
+        _tmoveato(m_state.c.x, n - 1);
+    } break;
+
+    case 'h': // SM -- Set Mode
+        _tsetmode(csi.priv, 1, csi.args);
+        break;
+
+    case 'l': // RM -- Reset Mode
+        _tsetmode(csi.priv, 0, csi.args);
+        break;
+
+    case 'm': // SGR -- Select Graphic Rendition
+        _handle_sgr(csi.args);
+        break;
+
+    case 'n': // DSR -- Device Status Report
+        switch (csi.args.empty() ? 0 : csi.args[0]) {
+        case 5: // Operating status
+            process_input("\033[0n");
+            break;
+        case 6: // Cursor position
+        {
+            char buf[40];
+            snprintf(buf, sizeof(buf), "\033[%i;%iR", m_state.c.y + 1,
+                     m_state.c.x + 1);
+            process_input(buf);
+        } break;
+        }
+        break;
+
+    case 'r': // DECSTBM -- Set Scrolling Region
+        if (csi.args.size() >= 2) {
+            int top = csi.args[0] - 1;
+            int bot = csi.args[1] - 1;
+
+            if (BETWEEN(top, 0, m_state.row - 1) &&
+                BETWEEN(bot, 0, m_state.row - 1) && top < bot) {
+                m_state.top = top;
+                m_state.bot = bot;
+                if (m_state.c.state & CursorOrigin)
+                    _move_to(0, m_state.top);
+            }
+        } else {
+            // Reset to full screen when no args
+            m_state.top = 0;
+            m_state.bot = m_state.row - 1;
+            if (m_state.c.state & CursorOrigin) {
+                _move_to(0, m_state.top);
+            }
+        }
+        break;
+
+    case 's': // DECSC -- Save cursor position
+        _cursor_save();
+        break;
+
+    case 'u': // DECRC -- Restore cursor position
+        _cursor_load();
+        break;
+    }
+}
+
+void Terminal::_handle_sgr(const std::vector<int>& args) {
+    size_t i;
+    int32_t idx;
+
+    if (args.empty()) {
+        // Reset all attributes if no parameters
+        m_state.c.attrs = 0;
+        m_state.c.fg = m_default_color_map[7]; // Default foreground
+        m_state.c.bg = m_default_color_map[0]; // Default background
+        m_state.c.color_mode = ColorBasic;
+        return;
+    }
+
+    for (i = 0; i < args.size(); i++) {
+        int attr = args[i];
+        switch (attr) {
+        case 0: // Reset
+            m_state.c.attrs = 0;
+            m_state.c.fg = m_default_color_map[7]; // Default foreground
+            m_state.c.bg = m_default_color_map[0]; // Default background
+            m_state.c.color_mode = ColorBasic;
+            break;
+        case 1:
+            m_state.c.attrs |= AttrBold;
+            break;
+        case 2:
+            m_state.c.attrs |= AttrFaint;
+            break;
+        case 3:
+            m_state.c.attrs |= AttrItalic;
+            break;
+        case 4:
+            m_state.c.attrs |= AttrUnderline;
+            break;
+        case 5:
+            m_state.c.attrs |= AttrBlink;
+            break;
+        case 7:
+            m_state.c.attrs |= AttrReverse;
+            break;
+        case 8:
+            m_state.c.attrs |= AttrInvisible;
+            break;
+        case 9:
+            m_state.c.attrs |= AttrStruck;
+            break;
+
+        case 22:
+            m_state.c.attrs &= ~(AttrBold | AttrFaint);
+            break;
+        case 23:
+            m_state.c.attrs &= ~AttrItalic;
+            break;
+        case 24:
+            m_state.c.attrs &= ~AttrUnderline;
+            break;
+        case 25:
+            m_state.c.attrs &= ~AttrBlink;
+            break;
+        case 27:
+            m_state.c.attrs &= ~AttrReverse;
+            break;
+        case 28:
+            m_state.c.attrs &= ~AttrInvisible;
+            break;
+        case 29:
+            m_state.c.attrs &= ~AttrStruck;
+            break;
+
+        // Foreground color
+        case 30 ... 37:
+            m_state.c.fg = m_default_color_map[attr - 30];
+            break;
+        case 38:
+            if (i + 2 < args.size()) {
+                if (args[i + 1] == 5) { // 256 colors
+                    i += 2;
+                    m_state.c.color_mode = Color256;
+                    if (args[i] < 16) {
+                        m_state.c.fg = m_default_color_map[args[i]];
+                    } else {
+                        // Convert 256 color to RGB
+                        uint8_t r = 0, g = 0, b = 0;
+                        if (args[i] < 232) { // 216 colors: 16-231
+                            uint8_t index = args[i] - 16;
+                            r = (index / 36) * 51;
+                            g = ((index / 6) % 6) * 51;
+                            b = (index % 6) * 51;
+                        } else { // Grayscale: 232-255
+                            r = g = b = (args[i] - 232) * 11;
+                        }
+                        m_state.c.fg =
+                            ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+                    }
+                } else if (args[i + 1] == 2 && i + 4 < args.size()) { // RGB
+                    i += 4;
+                    m_state.c.color_mode = ColorTrue;
+                    uint8_t r = args[i - 2];
+                    uint8_t g = args[i - 1];
+                    uint8_t b = args[i];
+                    m_state.c.fg =
+                        ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+                    m_state.c.true_color_fg = (r << 16) | (g << 8) | b;
+                }
+            }
+            break;
+        case 39: // Default foreground
+            m_state.c.fg = m_default_color_map[7];
+            m_state.c.color_mode = ColorBasic;
+            break;
+
+        // Background color
+        case 40 ... 47:
+            m_state.c.bg = m_default_color_map[attr - 40];
+            break;
+        case 48:
+            if (i + 2 < args.size()) {
+                if (args[i + 1] == 5) { // 256 colors
+                    i += 2;
+                    if (args[i] < 16) {
+                        m_state.c.bg = m_default_color_map[args[i]];
+                    } else {
+                        // Convert 256 color to RGB
+                        uint8_t r = 0, g = 0, b = 0;
+                        if (args[i] < 232) { // 216 colors: 16-231
+                            uint8_t index = args[i] - 16;
+                            r = (index / 36) * 51;
+                            g = ((index / 6) % 6) * 51;
+                            b = (index % 6) * 51;
+                        } else { // Grayscale: 232-255
+                            r = g = b = (args[i] - 232) * 11;
+                        }
+                        m_state.c.bg =
+                            ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+                    }
+                } else if (args[i + 1] == 2 && i + 4 < args.size()) { // RGB
+                    i += 4;
+                    uint8_t r = args[i - 2];
+                    uint8_t g = args[i - 1];
+                    uint8_t b = args[i];
+                    m_state.c.bg =
+                        ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+                    m_state.c.true_color_bg = (r << 16) | (g << 8) | b;
+                }
+            }
+            break;
+        case 49: // Default background
+            m_state.c.bg = m_default_color_map[0];
+            break;
+
+        // Bright foreground colors
+        case 90 ... 97:
+            m_state.c.fg = m_default_color_map[(attr - 90) + 8];
+            break;
+
+        // Bright background colors
+        case 100 ... 107:
+            m_state.c.bg = m_default_color_map[(attr - 100) + 8];
+            break;
+        }
+    }
+}
+
+void Terminal::_handle_control_code(uchar c) {
+    switch (c) {
+    case '\t': // HT - Horizontal Tab
+        _tputtab(1);
+        break;
+    case '\b': // BS - Backspace
+        if (m_state.c.x > 0) {
+            m_state.c.x--;
+            m_state.c.state &= ~CursorWrapnext;
+        }
+        break;
+    case '\r': // CR - Carriage Return
+        m_state.c.x = 0;
+        m_state.c.state &= ~CursorWrapnext;
+        break;
+    case '\f': // FF - Form Feed
+    case '\v': // VT - Vertical Tab
+    case '\n': // LF - Line Feed
+        if (m_state.c.y == m_state.bot) {
+            _scroll_up(m_state.top, 1);
+        } else {
+            m_state.c.y++;
+        }
+        if (m_state.mode & ModeCrlf) {
+            m_state.c.x = 0;
+        }
+        m_state.c.state &= ~CursorWrapnext;
+        break;
+    case '\a': // BEL - Bell
+        _ring_bell();
+        break;
+    case 033: // ESC - Escape
+        m_state.esc = EscStart;
+        break;
+    }
+}
+
+int Terminal::_eschandle(uchar ascii) {
+    switch (ascii) {
+    case '[':
+        m_state.esc |= EscCsi;
+        return 0;
+
+    // Handle O sequence directly for cursor moves
+    case 'O':
+        return 0; // Keep processing to handle next char directly
+
+    case 'A':                          // Cursor Up
+        if (m_state.esc == EscStart) { // Direct O-sequence
+            _tmoveto(m_state.c.x, m_state.c.y - 1);
+            return 1;
+        }
+        break;
+
+    case 'B': // Cursor Down
+        if (m_state.esc == EscStart) {
+            _tmoveto(m_state.c.x, m_state.c.y + 1);
+            return 1;
+        }
+        break;
+    case 'z':                      // DECID -- Identify Terminal
+        process_input("\033[?6c"); // Respond as VT102
+        break;
+    case ']':
+    case 'P':
+    case '_':
+    case '^':
+    case 'k':
+        _tstrsequence(ascii);
+        return 0;
+    case 'n':
+        m_state.charset = 2;
+        break;
+    case 'o':
+        m_state.charset = 3;
+        break;
+    case '(':
+    case ')':
+    case '*':
+    case '+':
+        m_state.icharset = ascii - '(';
+        m_state.esc |= EscAltcharset;
+        return 0;
+    case 'D': // IND
+        if (m_state.c.y == m_state.bot) {
+            _scroll_up(m_state.top, 1);
+        } else {
+            m_state.c.y++;
+        }
+        break;
+    case 'E': // NEL
+        _tnewline(1);
+        break;
+    case 'H': // HTS
+        m_state.tabs[m_state.c.x] = true;
+        break;
+    case 'M': // RI
+        if (m_state.c.y == m_state.top) {
+            _scroll_down(m_state.top, 1);
+        } else {
+            m_state.c.y--;
+        }
+        break;
+    case 'Z': // DECID
+        process_input("\033[?6c");
+        break;
+    case 'c': // RIS
+        _reset();
+        break;
+    case '=': // DECKPAM
+        _set_mode(true, ModeAppcursor);
+        break;
+    case '>': // DECKPNM
+        _set_mode(false, ModeAppcursor);
+        break;
+    case '7': // DECSC
+        _cursor_save();
+        break;
+    case '8': // DECRC
+        _cursor_load();
+        break;
+    case '\\':
+        break;
+    default:
+        LOG_ERROR("ESC unhandled: ESC '{:c}'", ascii);
+        break;
+    }
+    return 1;
+}
+
+void Terminal::_handle_dcs() const {
+    // Basic DCS sequence handling
+    // This function is called when DCS sequences are received
+    // For now, we'll only implement some basic DCS handling
+
+    // Extract DCS sequence from strescseq
+    if (m_strescseq.buf.empty()) {
+        return;
+    }
+
+    // Example DCS sequence handling:
+    // $q - DECRQSS (Request Status String)
+    if (m_strescseq.buf.length() >= 2 && m_strescseq.buf.substr(0, 2) == "$q") {
+        std::string param = m_strescseq.buf.substr(2);
+        // Handle DECRQSS request
+        if (param == "\"q") { // DECSCA
+            process_input(
+                "\033P1$r0\"q\033\\"); // Reply with default protection
+        } else if (param == "r") {     // DECSTBM
+            char response[40];
+            snprintf(response, sizeof(response), "\033P1$r%d;%dr\033\\",
+                     m_state.top + 1, m_state.bot + 1);
+            process_input(response);
+        }
+    }
+}
+
+void Terminal::_selection_normalize() {
+    // Existing normalization logic
+    if (m_selection.type == SelectionRegular &&
+        m_selection.ob.y != m_selection.oe.y) {
+        m_selection.nb.x = m_selection.ob.y < m_selection.oe.y
+                               ? m_selection.ob.x
+                               : m_selection.oe.x;
+        m_selection.ne.x = m_selection.ob.y < m_selection.oe.y
+                               ? m_selection.oe.x
+                               : m_selection.ob.x;
+    } else {
+        m_selection.nb.x = std::min(m_selection.ob.x, m_selection.oe.x);
+        m_selection.ne.x = std::max(m_selection.ob.x, m_selection.oe.x);
+    }
+    m_selection.nb.y = std::min(m_selection.ob.y, m_selection.oe.y);
+    m_selection.ne.y = std::max(m_selection.ob.y, m_selection.oe.y);
+
+    // Clamp X coordinates to terminal dimensions
+    m_selection.nb.x = std::clamp(m_selection.nb.x, 0, m_state.col - 1);
+    m_selection.ne.x = std::clamp(m_selection.ne.x, 0, m_state.col - 1);
+
+    // Don't clamp Y coordinates to allow scrollback selection
+    // Y coordinates can be negative for scrollback lines
+}
+
+void Terminal::_strparse() {
+    // Parse string sequences into arguments
+    m_strescseq.args.clear();
+    std::string current;
+
+    for (size_t i = 0; i < m_strescseq.len; i++) {
+        char c = m_strescseq.buf[i];
+        if (c == ';') {
+            m_strescseq.args.push_back(current);
+            current.clear();
+        } else {
+            current += c;
+        }
+    }
+    if (!current.empty()) {
+        m_strescseq.args.push_back(current);
+    }
+}
+
+void Terminal::_handle_string_sequence() {
+    if (m_strescseq.len == 0) {
+        return;
+    }
+
+    switch (m_strescseq.type) {
+    case ']': // OSC - Operating System Command
+        if (m_strescseq.args.size() >= 2) {
+            int cmd =
+                std::atoi(m_strescseq.args[0].c_str()); // NOLINT(cert-err34-c)
+            switch (cmd) {
+            case 0: // Set window title and icon name
+            case 1: // Set icon name
+            case 2: // Set window title
+                // You would implement window title setting here
+                // For now, we'll just print it
+                LOG_INFO("Title: {}", m_strescseq.args[1]);
+                break;
+
+            case 4: // Set/get color
+                _handle_osc_color(m_strescseq.args);
+                break;
+
+            case 52: // Manipulate selection data
+                _handle_osc_selection(m_strescseq.args);
+                break;
+            }
+        }
+        break;
+
+    case 'P': // DCS - Device Control String
+        _handle_dcs();
+        break;
+
+    case '_': // APC - Application Program Command
+        // Not commonly used, implement if needed
+        break;
+
+    case '^': // PM - Privacy Message
+        // Not commonly used, implement if needed
+        break;
+
+    case 'k': // Old title set compatibility
+        // Set window title using old xterm sequence
+        LOG_INFO("Old Title: {}", m_strescseq.buf);
+        break;
+    }
+}
+
+void Terminal::_handle_osc_color(const std::vector<std::string>& args) const {
+    if (args.size() < 2)
+        return;
+
+    int index = std::atoi(args[1].c_str()); // NOLINT(cert-err34-c)
+    if (args.size() > 2) {
+        // Set color
+        if (args[2][0] == '?') {
+            // Color query - respond with current color
+            char response[64];
+            snprintf(response, sizeof(response),
+                     "\033]4;%d;rgb:%.2X/%.2X/%.2X\007", index,
+                     static_cast<int>(m_state.c.fg.x * 255),
+                     static_cast<int>(m_state.c.fg.y * 255),
+                     static_cast<int>(m_state.c.fg.z * 255));
+            process_input(response);
+        } else {
+            // Set color - parse color value (typically in rgb:RR/GG/BB format)
+            // Implementation would go here
+        }
+    }
+}
+
+void Terminal::
+    _handle_osc_selection( // NOLINT(readability-convert-member-functions-to-static)
+        const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        return;
+    }
+
+    // args[1] would contain the selection type (clipboard, primary, etc)
+    // args[2] would contain the base64-encoded data
+
+    // Example implementation:
+    if (args[1] == "c") {    // clipboard
+        std::string decoded; // You would implement base64 decoding
+        ImGui::SetClipboardText(decoded.c_str());
+    }
+}
+
+void Terminal::_ring_bell() {
+    // Implement visual bell
+    if (m_state.mode & ModeVisualbell) {
+        // Briefly invert screen colors
+        for (auto& line : m_state.lines) {
+            for (auto& glyph : line) {
+                std::swap(glyph.fg, glyph.bg);
+            }
+        }
+        // Schedule screen restoration
+        std::thread([this]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            for (auto& line : m_state.lines) {
+                for (auto& glyph : line) {
+                    std::swap(glyph.fg, glyph.bg);
+                }
+            }
+        }).detach();
+    } else {
+        // System bell or audio bell
+        // Implement platform-specific bell
     }
 }
 
