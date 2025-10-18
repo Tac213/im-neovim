@@ -50,6 +50,8 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         "${im_app_platform_dir}/dx12_imgui_renderer.cpp"
         "${im_app_platform_dir}/win32_graphics_context.cpp"
         "${im_app_platform_dir}/win32_imgui_renderer.cpp"
+        "${im_app_platform_dir}/win32_pty.h"
+        "${im_app_platform_dir}/win32_pty.cpp"
     )
 endif()
 
