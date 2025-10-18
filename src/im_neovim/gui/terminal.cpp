@@ -1814,7 +1814,14 @@ void Terminal::_handle_sgr(const std::vector<int>& args) {
             break;
 
         // Foreground color
-        case 30 ... 37:
+        case 30:
+        case 31:
+        case 32:
+        case 33:
+        case 34:
+        case 35:
+        case 36:
+        case 37:
             m_state.c.fg = m_default_color_map[attr - 30];
             break;
         case 38:
