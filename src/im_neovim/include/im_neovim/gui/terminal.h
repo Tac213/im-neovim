@@ -8,9 +8,6 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-#if defined(__unix__)
-#include <sys/types.h>
-#endif
 
 namespace ImNeovim {
 using uchar = unsigned char;

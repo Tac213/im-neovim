@@ -1,16 +1,5 @@
 #include "im_neovim/gui/terminal.h"
 #include "im_neovim/logging.h"
-#if defined(__unix__)
-#include <errno.h>
-#include <fcntl.h>
-#include <limits.h> // For PATH_MAX (on Linux)
-#include <pwd.h>    // For getpwuid
-#include <stdlib.h> // For getenv, setenv, unsetenv, realpath
-#include <string.h> // For strrchr, strcpy, strncpy, strerror
-#include <sys/ioctl.h>
-#include <termios.h>
-#include <unistd.h>
-#endif
 #include <fmt/ranges.h>
 
 namespace ImNeovim {
