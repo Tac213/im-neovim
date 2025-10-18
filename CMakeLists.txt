@@ -21,6 +21,7 @@ set(im_app_public_files
     "${public_dir}/im_app/layer.h"
     "${public_dir}/im_app/application.h"
     "${public_dir}/im_app/file_system.h"
+    "${public_dir}/im_app/pty.h"
 )
 
 set(im_app_private_files
@@ -63,6 +64,8 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         "${im_app_platform_dir}/glfw_opengl_imgui_renderer.h"
         "${im_app_platform_dir}/glfw_opengl_imgui_renderer.cpp"
         "${im_app_platform_dir}/main.cpp"
+        "${im_app_platform_dir}/linux_pty.h"
+        "${im_app_platform_dir}/linux_pty.cpp"
     )
 endif()
 

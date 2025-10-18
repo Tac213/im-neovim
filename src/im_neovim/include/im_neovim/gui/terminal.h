@@ -1,5 +1,6 @@
 #pragma once
 
+#include "im_app/pty.h"
 #include "imgui.h"
 #include <cstdint>
 #include <mutex>
@@ -296,8 +297,7 @@ class Terminal {
     bool m_should_terminate{false};
 
     // PTY information
-    int m_pty_fd{-1};
-    pid_t m_child_pid{-1};
+    std::shared_ptr<ImApp::PseudoTerminal> m_pty{nullptr};
 
     float m_last_font_size = 0;
 

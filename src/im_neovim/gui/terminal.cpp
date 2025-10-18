@@ -1,6 +1,5 @@
 #include "im_neovim/gui/terminal.h"
 #include "im_neovim/logging.h"
-#include <csignal>
 #if defined(__unix__)
 #include <errno.h>
 #include <fcntl.h>
@@ -22,6 +21,8 @@ namespace ImNeovim {
 #define ISCONTROL(c) (ISCONTROLC0(c) || ISCONTROLC1(c))
 
 Terminal::Terminal() : m_window_title("Terminal") {
+    m_pty = ImApp::PseudoTerminal::create();
+
     // Initialize with safe default size
     m_state.row = 24;
     m_state.col = 80;
@@ -52,26 +53,24 @@ Terminal::Terminal() : m_window_title("Terminal") {
 
 Terminal::~Terminal() {
     m_should_terminate = true;
-    /* We need to write somethting into the `m_pty_fd`,
+    /* We need to write somethting into the `m_pty`,
      * otherwise the `m_read_thread` can't be joined.
      */
     process_input("exit\r");
     if (m_read_thread.joinable()) {
         m_read_thread.join();
     }
-    if (m_pty_fd >= 0) {
-        close(m_pty_fd);
+    if (m_pty->is_valid()) {
+        m_pty->terminate();
     }
-    if (m_child_pid > 0) {
-        kill(m_child_pid, SIGTERM);
-    }
+    m_pty.reset();
 }
 
 void Terminal::render() {
     if (!m_is_visible) {
         return;
     }
-    if (m_pty_fd < 0) {
+    if (!m_pty->is_valid()) {
         _start_shell();
     }
 
@@ -170,57 +169,57 @@ void Terminal::resize(int cols, int rows) {
     m_state.c.y = std::min(m_state.c.y, rows - 1);
 
     // Update PTY size if valid
-    struct winsize ws = {};
-    ws.ws_row = m_state.row;
-    ws.ws_col = m_state.col;
-    ioctl(m_pty_fd, TIOCSWINSZ, &ws); // Set master side size
+    if (m_pty->is_valid()) {
+        m_pty->resize(m_state.row, m_state.col);
+    }
 
     LOG_DEBUG("Terminal resized to {}x{}", cols, rows);
 }
 
 void Terminal::process_input(const std::string& input) const {
-    if (m_pty_fd < 0)
+    if (!m_pty->is_valid()) {
         return;
+    }
     if (m_state.mode & ModeBracketpaste) {
         if (input.substr(0, 4) == "\033[200~") {
-            write(m_pty_fd, input.c_str(), input.length());
+            m_pty->write(input.c_str(), input.length());
             return;
         }
         if (input.substr(0, 4) == "\033[201~") {
-            write(m_pty_fd, input.c_str(), input.length());
+            m_pty->write(input.c_str(), input.length());
             return;
         }
     }
     if (m_state.mode & ModeAppcursor) {
         if (input == "\033[A") {
-            write(m_pty_fd, "\033OA", 3); // Up
+            m_pty->write("\033OA", 3); // Up
             return;
         }
         if (input == "\033[B") {
-            write(m_pty_fd, "\033OB", 3); // Down
+            m_pty->write("\033OB", 3); // Down
             return;
         }
         if (input == "\033[C") {
-            write(m_pty_fd, "\033OC", 3); // Right
+            m_pty->write("\033OC", 3); // Right
             return;
         }
         if (input == "\033[D") {
-            write(m_pty_fd, "\033OD", 3); // Left
+            m_pty->write("\033OD", 3); // Left
             return;
         }
     }
 
     if (input == "\r\n" || input == "\n") {
-        write(m_pty_fd, "\r", 1);
+        m_pty->write("\r", 1);
         return;
     }
 
     if (input == "\b") {
-        write(m_pty_fd, "\b \b", 3);
+        m_pty->write("\b \b", 3);
         return;
     }
 
-    write(m_pty_fd, input.c_str(), input.length());
+    m_pty->write(input.c_str(), input.length());
 }
 
 bool Terminal::selected_text(int x, int y) {
@@ -254,207 +253,34 @@ void Terminal::paste_from_clipboard() const {
 
     if (m_state.mode & ModeBracketpaste) {
         // Send paste start sequence
-        write(m_pty_fd, "\033[200~", 6);
+        m_pty->write("\033[200~", 6);
         // Send the actual text
-        write(m_pty_fd, text, strlen(text));
+        m_pty->write(text, strlen(text));
         // Send paste end sequence
-        write(m_pty_fd, "\033[201~", 6);
+        m_pty->write("\033[201~", 6);
     } else {
-        write(m_pty_fd, text, strlen(text));
+        m_pty->write(text, strlen(text));
     }
 }
 
 void Terminal::_start_shell() {
     // Open PTY master
-    m_pty_fd = posix_openpt(O_RDWR | O_NOCTTY);
-    if (m_pty_fd < 0) {
-        LOG_CRITICAL("Failed to call posix_openpt!");
-        return;
+    if (m_pty->launch(
+            m_state.row,
+            m_state.col)) { // Use initial rows/cols from Terminal state object
+        m_read_thread = std::thread(&Terminal::_read_output, this);
+    } else {
+        LOG_CRITICAL("Faield to launch pty!");
     }
-    if (grantpt(m_pty_fd) < 0) {
-        LOG_CRITICAL("Failed to call grantpt!");
-        close(m_pty_fd);
-        m_pty_fd = -1;
-        return;
-    }
-    if (unlockpt(m_pty_fd) < 0) {
-        LOG_CRITICAL("Failed to call unlockpt!");
-        close(m_pty_fd);
-        m_pty_fd = -1;
-        return;
-    }
-    char* slave_name = ptsname(m_pty_fd);
-    if (!slave_name) {
-        LOG_CRITICAL("Failed to get the slave's name!");
-        close(m_pty_fd);
-        m_pty_fd = -1;
-        return;
-    }
-
-    m_child_pid = fork();
-
-    if (m_child_pid < 0) {
-        LOG_CRITICAL("Failed to fork current process!");
-        close(m_pty_fd);
-        m_pty_fd = -1;
-        return;
-    }
-
-    if (m_child_pid == 0) {
-        /* We are now in the forked child process. */
-        close(m_pty_fd); // Close master PTY in child
-
-        if (setsid() < 0) {
-            // Create new session, detach from parent's controlling TTY
-            LOG_CRITICAL("Failed to call setsid!");
-            exit(EXIT_FAILURE);
-        }
-
-        // Open slave PTY
-        int slave_fd = open(slave_name, O_RDWR);
-        if (slave_fd < 0) {
-            LOG_CRITICAL("Failed to slave PTY!");
-            exit(EXIT_FAILURE);
-        }
-
-        // Make the slave PTY the controlling terminal for this new session
-        if (ioctl(slave_fd, TIOCSCTTY, 0) < 0) {
-            // This can fail if the process is not a session leader and already
-            // has a controlling TTY. setsid() should make us a session leader.
-            LOG_WARN("ioctl TIOCSCTTY failed (can be non-fatal depending on "
-                     "context)");
-        }
-
-        dup2(slave_fd, STDIN_FILENO);
-        dup2(slave_fd, STDOUT_FILENO);
-        dup2(slave_fd, STDERR_FILENO);
-
-        if (slave_fd > STDERR_FILENO) {
-            close(slave_fd);
-        }
-
-        // Configure terminal modes for the slave PTY
-        struct termios tios;
-        if (tcgetattr(STDIN_FILENO, &tios) < 0) {
-            LOG_CRITICAL("tcgetattr failed on slave pty");
-            exit(EXIT_FAILURE);
-        }
-
-        // Set reasonable default modes (from st/typical terminal settings)
-        tios.c_iflag = ICRNL | IXON | IXANY | IMAXBEL | BRKINT;
-#if defined(IUTF8) // Common on Linux, good to enable if available
-        tios.c_iflag |= IUTF8;
-#endif
-        tios.c_oflag =
-            OPOST |
-            ONLCR; // OPOST: enable output processing, ONLCR: map NL to CR-NL
-
-        tios.c_cflag &= ~(CSIZE | PARENB); // Clear size and parity bits
-        tios.c_cflag |= CS8;               // 8 bits per character
-        tios.c_cflag |= CREAD;             // Enable receiver
-        tios.c_cflag |= HUPCL; // Hang up on last close (sends SIGHUP to
-                               // foreground process group)
-
-        // Standard local modes for interactive shells
-        tios.c_lflag =
-            ICANON | ISIG | IEXTEN | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE;
-
-        if (tcsetattr(STDIN_FILENO, TCSANOW, &tios) < 0) {
-            LOG_CRITICAL("tcsetattr failed on slave pty");
-            exit(EXIT_FAILURE);
-        }
-
-        // Set window size
-        struct winsize ws = {};
-        ws.ws_row =
-            m_state.row; // Use initial rows/cols from Terminal state object
-        ws.ws_col = m_state.col;
-        if (ioctl(STDIN_FILENO, TIOCSWINSZ, &ws) < 0) {
-            LOG_WARN("ioctl TIOCSWINSZ failed on slave pty (non-fatal, shell "
-                     "might misbehave)");
-        }
-
-        // Prepare environment for the shell
-        setenv("TERM", "xterm-256color", 1);
-        // Unsetting these is often good as the login shell will set them
-        // appropriately
-        unsetenv("COLUMNS");
-        unsetenv("LINES");
-        // Optionally, clear other inherited variables that might cause issues,
-        // e.g., unsetenv("TERMCAP"); unsetenv("WINDOWID"); // Common in some
-        // terminal emulators
-
-        // Logic for Linux and other Unix-like systems (also launch as login
-        // shell)
-        char shell_path_buf[PATH_MAX];
-        const char* shell_env_val =
-            getenv("SHELL"); // SHELL env var is primary on Linux
-
-        if (shell_env_val && shell_env_val[0] != '\0') {
-            strncpy(shell_path_buf, shell_env_val, sizeof(shell_path_buf));
-            shell_path_buf[sizeof(shell_path_buf) - 1] = '\0';
-        } else {
-            struct passwd* pw_linux =
-                getpwuid(getuid()); // Fallback to passwd entry
-            if (pw_linux && pw_linux->pw_shell &&
-                pw_linux->pw_shell[0] != '\0') {
-                strncpy(shell_path_buf, pw_linux->pw_shell,
-                        sizeof(shell_path_buf));
-                shell_path_buf[sizeof(shell_path_buf) - 1] = '\0';
-            } else {
-                strncpy(shell_path_buf, "/bin/bash",
-                        sizeof(shell_path_buf)); // Absolute fallback for Linux
-                shell_path_buf[sizeof(shell_path_buf) - 1] = '\0';
-            }
-        }
-
-        char shell_argv0_login_linux[PATH_MAX + 1];
-        shell_argv0_login_linux[0] = '-';
-        const char* shell_basename_linux = strrchr(shell_path_buf, '/');
-        if (shell_basename_linux) {
-            strncpy(shell_argv0_login_linux + 1, shell_basename_linux + 1,
-                    sizeof(shell_argv0_login_linux) - 2);
-        } else {
-            strncpy(shell_argv0_login_linux + 1, shell_path_buf,
-                    sizeof(shell_argv0_login_linux) - 2);
-        }
-        shell_argv0_login_linux[sizeof(shell_argv0_login_linux) - 1] = '\0';
-
-        char* const new_argv_linux[] = {shell_argv0_login_linux, nullptr};
-
-#if defined(IM_NVIM_DEBUG)
-        LOG_INFO("[TERMINAL DEBUG] Linux/Other Shell Launch Information:");
-        struct passwd* pw_linux_debug = getpwuid(getuid());
-        LOG_INFO("  User's pw_shell (from getpwuid): '{}'",
-                 (pw_linux_debug && pw_linux_debug->pw_shell)
-                     ? pw_linux_debug->pw_shell
-                     : "(not found or empty)");
-        const char* env_shell_child_linux = getenv("SHELL");
-        LOG_INFO("  getenv(\"SHELL\") in child process: '{}'",
-                 env_shell_child_linux ? env_shell_child_linux
-                                       : "(not set or empty)");
-        LOG_INFO("  Path to be executed (shell_path_buf): '{}'",
-                 shell_path_buf);
-        LOG_INFO("  argv[0] for child shell (new_argv_linux[0]): '{}'",
-                 new_argv_linux[0] ? new_argv_linux[0] : "(NULL)");
-#endif
-
-        execv(shell_path_buf, new_argv_linux);
-
-        LOG_CRITICAL(
-            "FATAL: Failed to execv shell '{}' (intended argv[0]='{}'): {}",
-            shell_path_buf, new_argv_linux[0] ? new_argv_linux[0] : "(null)",
-            strerror(errno));
-        exit(127); // Standard exit code for command not found / exec failure
-    }
-
-    m_read_thread = std::thread(&Terminal::_read_output, this);
 }
 
 void Terminal::_read_output() {
     char buffer[4096];
     while (!m_should_terminate) {
-        ssize_t bytes_read = read(m_pty_fd, buffer, sizeof(buffer) - 1);
+        size_t bytes_read = 0;
+        if (m_pty->is_valid()) {
+            bytes_read = m_pty->read(buffer, sizeof(buffer) - 1);
+        }
         if (bytes_read > 0) {
             std::lock_guard<std::mutex> lock(m_buffer_mutex);
             _write_to_buffer(buffer, bytes_read);
