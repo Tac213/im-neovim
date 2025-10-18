@@ -22,5 +22,8 @@ class Win32PseudoTerminal : public PseudoTerminal {
 
   private:
     HPCON m_h_pc{INVALID_HANDLE_VALUE};
+    HANDLE m_h_pipe_in{INVALID_HANDLE_VALUE};
+    HANDLE m_h_pipe_out{INVALID_HANDLE_VALUE};
+    PROCESS_INFORMATION m_cmd_pi;
 };
 } // namespace ImApp
