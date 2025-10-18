@@ -145,6 +145,7 @@ class Terminal {
     void set_embedded(bool embedded) { m_is_embedded = embedded; }
     void process_input(const std::string& input) const;
     bool selected_text(int x, int y);
+    void paste_from_clipboard() const;
 
   private:
     enum Charset {
@@ -169,6 +170,12 @@ class Terminal {
     void _check_font_size_changed();
     bool _setup_window();
     void _handle_terminal_resize();
+    void _handle_scrollback(const ImGuiIO& io, int new_rows);
+    void _handle_mouse_input(const ImGuiIO& io);
+    void _handle_keyboard_input(const ImGuiIO& io) const;
+    void _handle_special_keys(const ImGuiIO& io) const;
+    void _handle_control_combos(const ImGuiIO& io) const;
+    void _handle_regular_text_input(const ImGuiIO& io) const;
 
     // RenderBuffer helper functions
     void _render_buffer();
@@ -190,6 +197,12 @@ class Terminal {
                               float line_height);
     static void _handle_glyph_colors(const Glyph& glyph, ImVec4& fg,
                                      ImVec4& bg);
+
+    void _selection_start(int col, int row);
+    void _selection_extend(int col, int row);
+    void _selection_clear();
+    void _get_selection(std::string& selected);
+    void _copy_selection();
 
     // Terminal operations
     void _clear_region(int x1, int y1, int x2, int y2);
@@ -265,6 +278,7 @@ class Terminal {
         std::vector<bool> tabs;                    // Tab stops
     } m_state;
 
+    static constexpr float g_drag_threshold = 3.0f;
     Selection m_selection;
 
     std::string m_window_title;

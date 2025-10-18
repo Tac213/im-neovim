@@ -80,8 +80,12 @@ void Terminal::render() {
 
     // Only render terminal content if window is open and not collapsed
     if (window_created && (m_is_embedded || !m_embedded_window_collapsed)) {
+        ImGuiIO& io = ImGui::GetIO();
         _handle_terminal_resize();
         _render_buffer();
+        _handle_scrollback(io, m_state.row);
+        _handle_mouse_input(io);
+        _handle_keyboard_input(io);
     }
 
     // Only call End() if Begin() was actually called and succeeded
@@ -243,6 +247,21 @@ bool Terminal::selected_text(int x, int y) {
     return BETWEEN(actual_y, sel_start_y, sel_end_y) &&
            (actual_y != sel_start_y || x >= m_selection.nb.x) &&
            (actual_y != sel_end_y || x <= m_selection.ne.x);
+}
+
+void Terminal::paste_from_clipboard() const {
+    const char* text = ImGui::GetClipboardText();
+
+    if (m_state.mode & ModeBracketpaste) {
+        // Send paste start sequence
+        write(m_pty_fd, "\033[200~", 6);
+        // Send the actual text
+        write(m_pty_fd, text, strlen(text));
+        // Send paste end sequence
+        write(m_pty_fd, "\033[201~", 6);
+    } else {
+        write(m_pty_fd, text, strlen(text));
+    }
 }
 
 void Terminal::_start_shell() {
@@ -738,6 +757,180 @@ void Terminal::_handle_terminal_resize() {
     }
 }
 
+void Terminal::_handle_scrollback(const ImGuiIO& io, int new_rows) {
+    if (ImGui::IsWindowFocused() && ImGui::IsWindowHovered() &&
+        !(m_state.mode & ModeAltscreen)) {
+        if (io.MouseWheel != 0.0f) {
+            int max_scroll = std::max(
+                0, static_cast<int>(m_scrollback_buffer.size() + m_state.row) -
+                       new_rows);
+            // Reverse the scroll direction by changing subtraction to addition
+            m_scroll_offset += static_cast<int>(io.MouseWheel * 3);
+            m_scroll_offset = std::clamp(m_scroll_offset, 0, max_scroll);
+        }
+    }
+}
+
+void Terminal::_handle_mouse_input(const ImGuiIO& io) {
+
+    if (!ImGui::IsWindowFocused() || !ImGui::IsWindowHovered()) {
+        return;
+    }
+
+    ImVec2 mouse_pos = ImGui::GetMousePos();
+    ImVec2 content_pos = ImGui::GetCursorScreenPos();
+    float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
+    float line_height = ImGui::GetTextLineHeight();
+
+    int cell_x = static_cast<int>((mouse_pos.x - content_pos.x) / char_width);
+    int cell_y = static_cast<int>(
+        (mouse_pos.y - content_pos.y + (line_height * 0.2)) / line_height);
+
+    cell_x = std::clamp(cell_x, 0, m_state.col - 1);
+
+    // Account for scrollback offset when not in alt screen
+    if (!(m_state.mode & ModeAltscreen)) {
+        ImVec2 content_size = ImGui::GetContentRegionAvail();
+        int visible_rows =
+            std::max(1, static_cast<int>(content_size.y / line_height));
+        int total_lines = m_scrollback_buffer.size() + m_state.row;
+        int max_scroll = std::max(0, total_lines - visible_rows);
+        m_scroll_offset = std::clamp(m_scroll_offset, 0, max_scroll);
+        int start_line =
+            std::max(0, total_lines - visible_rows - m_scroll_offset);
+
+        // Convert visible Y coordinate to actual buffer coordinate
+        int actual_y = start_line + cell_y;
+
+        // Convert to selection coordinate system (relative to scrollback
+        // buffer)
+        cell_y = actual_y - m_scrollback_buffer.size();
+
+    } else {
+        // In alt screen, clamp to current screen
+        cell_y = std::clamp(cell_y, 0, m_state.row - 1);
+    }
+
+    static ImVec2 click_start_pos{0, 0};
+
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        click_start_pos = mouse_pos;
+        _selection_start(cell_x, cell_y);
+    } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        ImVec2 drag_delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+        float drag_distance =
+            sqrt(drag_delta.x * drag_delta.x + drag_delta.y * drag_delta.y);
+
+        if (drag_distance > g_drag_threshold) {
+            _selection_extend(cell_x, cell_y);
+        }
+    } else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        ImVec2 drag_delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+        float drag_distance =
+            sqrt(drag_delta.x * drag_delta.x + drag_delta.y * drag_delta.y);
+
+        if (drag_distance <= g_drag_threshold) {
+            _selection_clear();
+        }
+    }
+
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        paste_from_clipboard();
+    }
+
+    // Handle clipboard shortcuts
+    if (io.KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            _copy_selection();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+            paste_from_clipboard();
+        }
+    }
+}
+
+void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
+    if (!ImGui::IsWindowFocused()) {
+        return;
+    }
+    _handle_special_keys(io);
+    _handle_control_combos(io);
+    _handle_regular_text_input(io);
+}
+
+void Terminal::_handle_special_keys(const ImGuiIO& io) const {
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        process_input("\r");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+        process_input("\x7f");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        process_input(m_state.mode & ModeAppcursor ? "\033OA" : "\033[A");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        process_input(m_state.mode & ModeAppcursor ? "\033OB" : "\033[B");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+        process_input(m_state.mode & ModeAppcursor ? "\033OC" : "\033[C");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+        if (io.KeyCtrl) {
+            process_input("\033[1;5D");
+        } else if (io.KeyShift) {
+            process_input("\033[1;2D");
+        } else if (m_state.mode & ModeAppcursor) {
+            process_input("\033OD");
+        } else {
+            process_input("\033[D");
+        }
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
+        process_input("\033[H");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_End)) {
+        process_input("\033[F");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        process_input("\033[3~");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) {
+        process_input("\033[5~");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) {
+        process_input("\033[6~");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+        process_input("\t");
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        process_input("\033");
+    }
+}
+void Terminal::_handle_control_combos(const ImGuiIO& io) const {
+    if (!io.KeyCtrl && !io.KeySuper) {
+        return;
+    }
+
+    static const std::pair<ImGuiKey, char> s_control_keys[] = {
+        {ImGuiKey_A, '\x01'}, {ImGuiKey_B, '\x02'}, {ImGuiKey_C, '\x03'},
+        {ImGuiKey_D, '\x04'}, {ImGuiKey_E, '\x05'}, {ImGuiKey_F, '\x06'},
+        {ImGuiKey_G, '\x07'}, {ImGuiKey_H, '\x08'}, {ImGuiKey_I, '\x09'},
+        {ImGuiKey_J, '\x0A'}, {ImGuiKey_K, '\x0B'}, {ImGuiKey_L, '\x0C'},
+        {ImGuiKey_M, '\x0D'}, {ImGuiKey_N, '\x0E'}, {ImGuiKey_O, '\x0F'},
+        {ImGuiKey_P, '\x10'}, {ImGuiKey_Q, '\x11'}, {ImGuiKey_R, '\x12'},
+        {ImGuiKey_S, '\x13'}, {ImGuiKey_T, '\x14'}, {ImGuiKey_U, '\x15'},
+        {ImGuiKey_W, '\x17'}, {ImGuiKey_X, '\x18'}, {ImGuiKey_Y, '\x19'},
+        {ImGuiKey_Z, '\x1A'}};
+
+    for (const auto& [key, ctrl_char] : s_control_keys) {
+        if (ImGui::IsKeyPressed(key)) {
+            process_input(std::string(1, ctrl_char));
+        }
+    }
+}
+void Terminal::_handle_regular_text_input(const ImGuiIO& io) const {
+    if (io.KeySuper || io.KeyCtrl || io.KeyAlt) {
+        return;
+    }
+
+    for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
+        char c = static_cast<char>(io.InputQueueCharacters[i]);
+        if (c != 0) {
+            process_input(std::string(1, c));
+        }
+    }
+}
+
 void Terminal::_render_buffer() {
     std::lock_guard<std::mutex> lock(m_buffer_mutex);
 
@@ -988,6 +1181,100 @@ void Terminal::_handle_glyph_colors(const Glyph& glyph, ImVec4& fg,
         fg.x = std::min(1.0f, fg.x * 1.5f);
         fg.y = std::min(1.0f, fg.y * 1.5f);
         fg.z = std::min(1.0f, fg.z * 1.5f);
+    }
+}
+
+void Terminal::_selection_start(int col, int row) {
+    _selection_clear();
+    m_selection.mode = SelectionEmpty;
+    m_selection.type = SelectionRegular;
+    m_selection.alt = m_state.mode & ModeAltscreen;
+    m_selection.snap = 0;
+    m_selection.oe.x = m_selection.ob.x = col;
+    m_selection.oe.y = m_selection.ob.y = row;
+    _selection_normalize();
+
+    if (m_selection.snap != 0) {
+        m_selection.mode = SelectionReady;
+    }
+}
+
+void Terminal::_selection_extend(int col, int row) {
+    if (m_selection.mode == SelectionIdle)
+        return;
+    if (m_selection.mode == SelectionEmpty) {
+        m_selection.mode = SelectionSelecting;
+    }
+
+    m_selection.oe.x = col;
+    m_selection.oe.y = row;
+    _selection_normalize();
+}
+
+void Terminal::_selection_clear() {
+    if (m_selection.ob.x == -1) {
+        return;
+    }
+    m_selection.mode = SelectionIdle;
+    m_selection.ob.x = -1;
+}
+
+void Terminal::_get_selection(std::string& selected) {
+    if (m_selection.ob.x == -1) {
+        return;
+    }
+
+    // Convert selection coordinates to absolute buffer positions
+    int sel_start_y = m_scrollback_buffer.size() + m_selection.nb.y;
+    int sel_end_y = m_scrollback_buffer.size() + m_selection.ne.y;
+
+    for (int abs_y = sel_start_y; abs_y <= sel_end_y; abs_y++) {
+        const std::vector<Glyph>* line = nullptr;
+
+        // Determine which buffer this line is in
+        if (abs_y < m_scrollback_buffer.size()) {
+            // Line is in scrollback buffer
+            line = &m_scrollback_buffer[abs_y];
+        } else {
+            // Line is in current screen buffer
+            int screen_y = abs_y - m_scrollback_buffer.size();
+            if (screen_y >= 0 && screen_y < m_state.lines.size()) {
+                line = &m_state.lines[screen_y];
+            }
+        }
+
+        if (!line) {
+            continue;
+        }
+
+        int xstart = (abs_y == sel_start_y) ? m_selection.nb.x : 0;
+        int xend = (abs_y == sel_end_y) ? m_selection.ne.x : m_state.col - 1;
+
+        // Clamp xstart and xend to line size
+        xstart = std::clamp(xstart, 0, static_cast<int>(line->size()) - 1);
+        xend = std::clamp(xend, 0, static_cast<int>(line->size()) - 1);
+
+        for (int x = xstart; x <= xend; x++) {
+            if ((*line)[x].mode & AttrWdummy) {
+                continue;
+            }
+
+            char buf[g_utf_size];
+            size_t len = _utf8_encode((*line)[x].u, buf);
+            selected.append(buf, len);
+        }
+
+        if (abs_y < sel_end_y)
+            selected += '\n';
+    }
+}
+
+void Terminal::_copy_selection() {
+    std::string selected;
+    _get_selection(selected);
+    if (!selected.empty()) {
+        // Use ImGui's clipboard functions
+        ImGui::SetClipboardText(selected.c_str());
     }
 }
 
