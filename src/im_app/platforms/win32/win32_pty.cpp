@@ -242,8 +242,8 @@ bool Win32PseudoTerminal::resize(uint16_t row, uint16_t col) {
         return false;
     }
     COORD console_size{
-        .X = static_cast<SHORT>(row),
-        .Y = static_cast<SHORT>(col),
+        .X = static_cast<SHORT>(col),
+        .Y = static_cast<SHORT>(row),
     };
     return SUCCEEDED(::ResizePseudoConsole(m_h_pc, console_size));
 }
