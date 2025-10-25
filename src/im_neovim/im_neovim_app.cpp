@@ -1,3 +1,4 @@
+#include "im_neovim/gui/terminal.h"
 #include "im_neovim/logging.h"
 #include <im_app/application.h>
 #include <im_app/file_system.h>
@@ -10,9 +11,14 @@
 namespace ImNeovim {
 class MyLayer : public ImApp::Layer {
   public:
-    void on_imgui_render() override { ImGui::ShowDemoWindow(); }
-};
+    void on_imgui_render() override {
+        ImGui::ShowDemoWindow();
+        m_terminal.render();
+    }
 
+  private:
+    Terminal m_terminal;
+};
 static void initialize_logger() {
     auto stdout_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 #if defined(IM_NVIM_DEBUG)
