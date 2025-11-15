@@ -55,3 +55,8 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         set_target_properties(DirectX-Guids PROPERTIES FOLDER ${third_party_folder}/DirectX-Headers)
     endif()
 endif()
+
+if(NOT TARGET libvterm)
+    include(libvterm.cmake)
+    set_target_properties(libvterm PROPERTIES FOLDER ${third_party_folder}/libvterm)
+endif()

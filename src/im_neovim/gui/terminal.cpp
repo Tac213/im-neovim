@@ -1,6 +1,7 @@
 #include "im_neovim/gui/terminal.h"
 #include "im_neovim/logging.h"
 #include <fmt/ranges.h>
+#include <type_traits>
 
 namespace ImNeovim {
 #define BETWEEN(x, a, b) ((a) <= (x) && (x) <= (b))
@@ -9,7 +10,7 @@ namespace ImNeovim {
 #define ISCONTROLC1(c) (BETWEEN(c, 0x80, 0x9f))
 #define ISCONTROL(c) (ISCONTROLC0(c) || ISCONTROLC1(c))
 
-Terminal::Terminal() : m_window_title("Terminal") {
+Terminal::Terminal() : m_window_title("Terminal"), m_dark_mode(true) {
     m_pty = ImApp::PseudoTerminal::create();
 
     // Initialize with safe default size
@@ -38,6 +39,28 @@ Terminal::Terminal() : m_window_title("Terminal") {
     for (int i = 8; i < m_state.col; i += 8) {
         m_state.tabs[i] = true;
     }
+
+    // Create VTerm instance
+    m_vterm = vterm_new(m_state.row, m_state.col);
+    vterm_set_utf8(m_vterm, 1);
+    // Get screen and set up callbacks BEFORE enabling
+    m_vterm_screen = vterm_obtain_screen(m_vterm);
+    vterm_screen_enable_altscreen(m_vterm_screen, 1);
+    vterm_screen_enable_reflow(m_vterm_screen, true);
+
+    m_vterm_screen_callbacks.damage = _vterm_damage;
+    m_vterm_screen_callbacks.moverect = _vterm_moverect;
+    m_vterm_screen_callbacks.movecursor = _vterm_movecursor;
+    m_vterm_screen_callbacks.settermprop = _vterm_settermprop;
+    m_vterm_screen_callbacks.bell = _vterm_bell;
+    m_vterm_screen_callbacks.sb_pushline = _vterm_sb_pushline;
+    m_vterm_screen_callbacks.sb_popline = _vterm_sb_popline;
+    m_vterm_screen_callbacks.sb_clear = _vterm_sb_clear;
+    vterm_screen_set_callbacks(m_vterm_screen, &m_vterm_screen_callbacks, this);
+
+    vterm_screen_set_damage_merge(m_vterm_screen, VTERM_DAMAGE_SCROLL);
+    vterm_screen_reset(m_vterm_screen, 1);
+    vterm_output_set_callback(m_vterm, _vterm_output, this);
 }
 
 Terminal::~Terminal() {
@@ -49,6 +72,11 @@ Terminal::~Terminal() {
     if (m_read_thread.joinable()) {
         m_read_thread.join();
     }
+    if (m_vterm) {
+        vterm_free(m_vterm);
+    }
+    m_vterm = nullptr;
+    m_vterm_screen = nullptr;
     if (m_pty->is_valid()) {
         m_pty->terminate();
     }
@@ -161,6 +189,8 @@ void Terminal::resize(int cols, int rows) {
     if (m_pty->is_valid()) {
         m_pty->resize(m_state.row, m_state.col);
     }
+    vterm_set_size(m_vterm, m_state.row, m_state.col);
+    vterm_screen_flush_damage(m_vterm_screen);
 
     LOG_DEBUG("Terminal resized to {}x{}", cols, rows);
 }
@@ -218,9 +248,9 @@ bool Terminal::selected_text(int x, int y) {
     }
 
     // Convert coordinates to absolute buffer positions
-    int actual_y = m_scrollback_buffer.size() + y;
-    int sel_start_y = m_scrollback_buffer.size() + m_selection.nb.y;
-    int sel_end_y = m_scrollback_buffer.size() + m_selection.ne.y;
+    int actual_y = m_sb_buffer.size() + y;
+    int sel_start_y = m_sb_buffer.size() + m_selection.nb.y;
+    int sel_end_y = m_sb_buffer.size() + m_selection.ne.y;
 
     // Ensure start is less than or equal to end
     if (sel_start_y > sel_end_y) {
@@ -284,132 +314,136 @@ void Terminal::_write_to_buffer(const char* data, size_t length) {
     static char utf8buf[g_utf_size];
     static size_t utf8len = 0;
 
-    for (size_t i = 0; i < length; ++i) {
-        unsigned char c = data[i];
+    vterm_input_write(m_vterm, data, length);
+    vterm_screen_flush_damage(m_vterm_screen);
+    // for (size_t i = 0; i < length; ++i) {
+    //     unsigned char c = data[i];
 
-        // Existing STR sequence handling
-        if (m_state.esc & EscStr) {
-            if (c == '\a' || c == 030 || c == 032 || c == 033 ||
-                ISCONTROLC1(c)) {
-                m_state.esc &= ~(EscStart | EscStr);
-                m_state.esc |= EscStrEnd;
-                _strparse();
-                _handle_string_sequence();
-                m_state.esc = 0;
-                continue;
-            }
+    //     // Existing STR sequence handling
+    //     if (m_state.esc & EscStr) {
+    //         if (c == '\a' || c == 030 || c == 032 || c == 033 ||
+    //             ISCONTROLC1(c)) {
+    //             m_state.esc &= ~(EscStart | EscStr);
+    //             m_state.esc |= EscStrEnd;
+    //             _strparse();
+    //             _handle_string_sequence();
+    //             m_state.esc = 0;
+    //             continue;
+    //         }
 
-            if (m_strescseq.len < 256) {
-                m_strescseq.buf += c;
-                m_strescseq.len++;
-            }
-            continue;
-        }
+    //         if (m_strescseq.len < 256) {
+    //             m_strescseq.buf += c;
+    //             m_strescseq.len++;
+    //         }
+    //         continue;
+    //     }
 
-        // Escape sequence start
-        if (c == '\033') {
-            m_state.esc = EscStart;
-            m_csiescseq.len = 0;
-            m_strescseq.buf.clear();
-            m_strescseq.len = 0;
-            utf8len = 0; // Reset UTF-8 buffer
-            continue;
-        }
+    //     // Escape sequence start
+    //     if (c == '\033') {
+    //         m_state.esc = EscStart;
+    //         m_csiescseq.len = 0;
+    //         m_strescseq.buf.clear();
+    //         m_strescseq.len = 0;
+    //         utf8len = 0; // Reset UTF-8 buffer
+    //         continue;
+    //     }
 
-        // Control character handling
-        if (ISCONTROL(c)) {
-            utf8len = 0; // Reset UTF-8 buffer
-            _handle_control_code(c);
-            continue;
-        }
+    //     // Control character handling
+    //     if (ISCONTROL(c)) {
+    //         utf8len = 0; // Reset UTF-8 buffer
+    //         _handle_control_code(c);
+    //         continue;
+    //     }
 
-        // Ongoing escape sequence processing
-        if (m_state.esc & EscStart) {
-            if (m_state.esc & EscCsi) {
-                if (m_csiescseq.len < sizeof(m_csiescseq.buf) - 1) {
-                    m_csiescseq.buf[m_csiescseq.len++] = c;
-                    if (BETWEEN(c, 0x40, 0x7E)) {
-                        m_csiescseq.buf[m_csiescseq.len] = '\0';
-                        m_csiescseq.mode[0] = c;
-                        _parse_csi_param(m_csiescseq);
-                        _handle_csi(m_csiescseq);
-                        m_state.esc = 0;
-                        m_csiescseq.len = 0;
-                    }
-                }
-                continue;
-            }
+    //     // Ongoing escape sequence processing
+    //     if (m_state.esc & EscStart) {
+    //         if (m_state.esc & EscCsi) {
+    //             if (m_csiescseq.len < sizeof(m_csiescseq.buf) - 1) {
+    //                 m_csiescseq.buf[m_csiescseq.len++] = c;
+    //                 if (BETWEEN(c, 0x40, 0x7E)) {
+    //                     m_csiescseq.buf[m_csiescseq.len] = '\0';
+    //                     m_csiescseq.mode[0] = c;
+    //                     _parse_csi_param(m_csiescseq);
+    //                     _handle_csi(m_csiescseq);
+    //                     m_state.esc = 0;
+    //                     m_csiescseq.len = 0;
+    //                 }
+    //             }
+    //             continue;
+    //         }
 
-            if (_eschandle(c)) {
-                m_state.esc = 0;
-            }
-            continue;
-        }
+    //         if (_eschandle(c)) {
+    //             m_state.esc = 0;
+    //         }
+    //         continue;
+    //     }
 
-        if (m_state.mode & ModeUtf8) {
-            if (utf8len == 0) {
-                if ((c & 0x80) == 0) {
-                    _write_char(c);
-                } else if ((c & 0xE0) == 0xC0 || // 2-byte start
-                           (c & 0xF0) == 0xE0 || // 3-byte start
-                           (c & 0xF8) == 0xF0) { // 4-byte start
-                    utf8buf[utf8len++] = c;
+    //     if (m_state.mode & ModeUtf8) {
+    //         if (utf8len == 0) {
+    //             if ((c & 0x80) == 0) {
+    //                 _write_char(c);
+    //             } else if ((c & 0xE0) == 0xC0 || // 2-byte start
+    //                        (c & 0xF0) == 0xE0 || // 3-byte start
+    //                        (c & 0xF8) == 0xF0) { // 4-byte start
+    //                 utf8buf[utf8len++] = c;
 
-                    // If it's a 3-byte sequence (box drawing characters),
-                    // we want to immediately look for the next two bytes
-                    if ((c & 0xF0) == 0xE0) {
-                        // Look ahead for the next two bytes
-                        if (i + 2 < length) {
-                            utf8buf[utf8len++] = data[i + 1];
-                            utf8buf[utf8len++] = data[i + 2];
+    //                 // If it's a 3-byte sequence (box drawing characters),
+    //                 // we want to immediately look for the next two bytes
+    //                 if ((c & 0xF0) == 0xE0) {
+    //                     // Look ahead for the next two bytes
+    //                     if (i + 2 < length) {
+    //                         utf8buf[utf8len++] = data[i + 1];
+    //                         utf8buf[utf8len++] = data[i + 2];
 
-                            Rune u;
-                            size_t decoded = _utf8_decode(utf8buf, &u, utf8len);
-                            if (decoded > 0) {
-                                _write_char(u);
-                            }
+    //                         Rune u;
+    //                         size_t decoded = _utf8_decode(utf8buf, &u,
+    //                         utf8len); if (decoded > 0) {
+    //                             _write_char(u);
+    //                         }
 
-                            // Skip the next two bytes since we've processed
-                            // them
-                            i += 2;
-                            utf8len = 0;
-                        }
-                    }
-                } else {
-                    // Unexpected start byte
-                    utf8buf[utf8len++] = c;
-                    utf8buf[utf8len] = '\0';
-                    _write_char(0xFFFD);
-                }
-            } else {
-                // This block is now less likely to be used due to the changes
-                // above
-                if ((c & 0xC0) == 0x80) {
-                    utf8buf[utf8len++] = c;
+    //                         // Skip the next two bytes since we've processed
+    //                         // them
+    //                         i += 2;
+    //                         utf8len = 0;
+    //                     }
+    //                 }
+    //             } else {
+    //                 // Unexpected start byte
+    //                 utf8buf[utf8len++] = c;
+    //                 utf8buf[utf8len] = '\0';
+    //                 _write_char(0xFFFD);
+    //             }
+    //         } else {
+    //             // This block is now less likely to be used due to the
+    //             changes
+    //             // above
+    //             if ((c & 0xC0) == 0x80) {
+    //                 utf8buf[utf8len++] = c;
 
-                    size_t expected_len = ((utf8buf[0] & 0xE0) == 0xC0)   ? 2
-                                          : ((utf8buf[0] & 0xF0) == 0xE0) ? 3
-                                          : ((utf8buf[0] & 0xF8) == 0xF0) ? 4
-                                                                          : 0;
+    //                 size_t expected_len = ((utf8buf[0] & 0xE0) == 0xC0)   ? 2
+    //                                       : ((utf8buf[0] & 0xF0) == 0xE0) ? 3
+    //                                       : ((utf8buf[0] & 0xF8) == 0xF0) ? 4
+    //                                                                       :
+    //                                                                       0;
 
-                    if (utf8len == expected_len) {
-                        Rune u;
-                        size_t decoded = _utf8_decode(utf8buf, &u, utf8len);
-                        if (decoded > 0) {
-                            _write_char(u);
-                        }
-                        utf8len = 0;
-                    }
-                } else {
-                    LOG_ERROR("Invalid continuation byte: 0x{:x}",
-                              static_cast<int>(c));
-                    utf8len = 0;
-                }
-            }
-        } else {
-            _write_char(c);
-        }
-    }
+    //                 if (utf8len == expected_len) {
+    //                     Rune u;
+    //                     size_t decoded = _utf8_decode(utf8buf, &u, utf8len);
+    //                     if (decoded > 0) {
+    //                         _write_char(u);
+    //                     }
+    //                     utf8len = 0;
+    //                 }
+    //             } else {
+    //                 LOG_ERROR("Invalid continuation byte: 0x{:x}",
+    //                           static_cast<int>(c));
+    //                 utf8len = 0;
+    //             }
+    //         }
+    //     } else {
+    //         _write_char(c);
+    //     }
+    // }
 }
 
 void Terminal::_write_char(Rune u) {
@@ -576,9 +610,9 @@ void Terminal::_handle_scrollback(const ImGuiIO& io, int new_rows) {
     if (ImGui::IsWindowFocused() && ImGui::IsWindowHovered() &&
         !(m_state.mode & ModeAltscreen)) {
         if (io.MouseWheel != 0.0f) {
-            int max_scroll = std::max(
-                0, static_cast<int>(m_scrollback_buffer.size() + m_state.row) -
-                       new_rows);
+            int max_scroll =
+                std::max(0, static_cast<int>(m_sb_buffer.size() + m_state.row) -
+                                new_rows);
             // Reverse the scroll direction by changing subtraction to addition
             m_scroll_offset += static_cast<int>(io.MouseWheel * 3);
             m_scroll_offset = std::clamp(m_scroll_offset, 0, max_scroll);
@@ -608,7 +642,7 @@ void Terminal::_handle_mouse_input(const ImGuiIO& io) {
         ImVec2 content_size = ImGui::GetContentRegionAvail();
         int visible_rows =
             std::max(1, static_cast<int>(content_size.y / line_height));
-        int total_lines = m_scrollback_buffer.size() + m_state.row;
+        int total_lines = m_sb_buffer.size() + m_state.row;
         int max_scroll = std::max(0, total_lines - visible_rows);
         m_scroll_offset = std::clamp(m_scroll_offset, 0, max_scroll);
         int start_line =
@@ -619,7 +653,7 @@ void Terminal::_handle_mouse_input(const ImGuiIO& io) {
 
         // Convert to selection coordinate system (relative to scrollback
         // buffer)
-        cell_y = actual_y - m_scrollback_buffer.size();
+        cell_y = actual_y - m_sb_buffer.size();
 
     } else {
         // In alt screen, clamp to current screen
@@ -669,9 +703,81 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
     if (!ImGui::IsWindowFocused()) {
         return;
     }
-    _handle_special_keys(io);
-    _handle_control_combos(io);
-    _handle_regular_text_input(io);
+    VTermModifier mod = VTERM_MOD_NONE;
+    if (io.KeyCtrl) {
+        mod = static_cast<VTermModifier>(
+            static_cast<std::underlying_type_t<VTermModifier>>(mod) |
+            static_cast<std::underlying_type_t<VTermModifier>>(VTERM_MOD_CTRL));
+    }
+    if (io.KeyShift) {
+        mod = static_cast<VTermModifier>(
+            static_cast<std::underlying_type_t<VTermModifier>>(mod) |
+            static_cast<std::underlying_type_t<VTermModifier>>(
+                VTERM_MOD_SHIFT));
+    }
+    if (io.KeyAlt) {
+        mod = static_cast<VTermModifier>(
+            static_cast<std::underlying_type_t<VTermModifier>>(mod) |
+            static_cast<std::underlying_type_t<VTermModifier>>(VTERM_MOD_ALT));
+    }
+    static const std::pair<ImGuiKey, VTermKey> s_key_map[] = {
+        {ImGuiKey_UpArrow, VTERM_KEY_UP},
+        {ImGuiKey_DownArrow, VTERM_KEY_DOWN},
+        {ImGuiKey_LeftArrow, VTERM_KEY_LEFT},
+        {ImGuiKey_RightArrow, VTERM_KEY_RIGHT},
+        {ImGuiKey_Insert, VTERM_KEY_INS},
+        {ImGuiKey_Delete, VTERM_KEY_DEL},
+        {ImGuiKey_Home, VTERM_KEY_HOME},
+        {ImGuiKey_End, VTERM_KEY_END},
+        {ImGuiKey_PageUp, VTERM_KEY_PAGEUP},
+        {ImGuiKey_PageDown, VTERM_KEY_PAGEDOWN},
+        {ImGuiKey_F1, static_cast<VTermKey>(VTERM_KEY_FUNCTION(1))},
+        {ImGuiKey_F2, static_cast<VTermKey>(VTERM_KEY_FUNCTION(2))},
+        {ImGuiKey_F3, static_cast<VTermKey>(VTERM_KEY_FUNCTION(3))},
+        {ImGuiKey_F4, static_cast<VTermKey>(VTERM_KEY_FUNCTION(4))},
+        {ImGuiKey_F5, static_cast<VTermKey>(VTERM_KEY_FUNCTION(5))},
+        {ImGuiKey_F6, static_cast<VTermKey>(VTERM_KEY_FUNCTION(6))},
+        {ImGuiKey_F7, static_cast<VTermKey>(VTERM_KEY_FUNCTION(7))},
+        {ImGuiKey_F8, static_cast<VTermKey>(VTERM_KEY_FUNCTION(8))},
+        {ImGuiKey_F9, static_cast<VTermKey>(VTERM_KEY_FUNCTION(9))},
+        {ImGuiKey_F10, static_cast<VTermKey>(VTERM_KEY_FUNCTION(10))},
+        {ImGuiKey_F11, static_cast<VTermKey>(VTERM_KEY_FUNCTION(11))},
+        {ImGuiKey_F12, static_cast<VTermKey>(VTERM_KEY_FUNCTION(12))},
+        {ImGuiKey_F13, static_cast<VTermKey>(VTERM_KEY_FUNCTION(13))},
+        {ImGuiKey_F14, static_cast<VTermKey>(VTERM_KEY_FUNCTION(14))},
+        {ImGuiKey_F15, static_cast<VTermKey>(VTERM_KEY_FUNCTION(15))},
+        {ImGuiKey_F16, static_cast<VTermKey>(VTERM_KEY_FUNCTION(16))},
+        {ImGuiKey_F17, static_cast<VTermKey>(VTERM_KEY_FUNCTION(17))},
+        {ImGuiKey_F18, static_cast<VTermKey>(VTERM_KEY_FUNCTION(18))},
+        {ImGuiKey_F19, static_cast<VTermKey>(VTERM_KEY_FUNCTION(19))},
+        {ImGuiKey_F20, static_cast<VTermKey>(VTERM_KEY_FUNCTION(20))},
+        {ImGuiKey_F21, static_cast<VTermKey>(VTERM_KEY_FUNCTION(21))},
+        {ImGuiKey_F22, static_cast<VTermKey>(VTERM_KEY_FUNCTION(22))},
+        {ImGuiKey_F23, static_cast<VTermKey>(VTERM_KEY_FUNCTION(23))},
+        {ImGuiKey_F24, static_cast<VTermKey>(VTERM_KEY_FUNCTION(24))}};
+    for (const auto& [imgui_key, vterm_key] : s_key_map) {
+        if (ImGui::IsKeyPressed(imgui_key)) {
+            vterm_keyboard_key(m_vterm, vterm_key, mod);
+        }
+    }
+    for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
+        const auto& cc = io.InputQueueCharacters[i];
+        char c = static_cast<char>(io.InputQueueCharacters[i]);
+        if (c != 0) {
+            if (c == '\r') {
+                vterm_keyboard_key(m_vterm, VTERM_KEY_ENTER, mod);
+            } else if (c == '\t') {
+                vterm_keyboard_key(m_vterm, VTERM_KEY_TAB, mod);
+            } else if (c == '\b') {
+                vterm_keyboard_key(m_vterm, VTERM_KEY_BACKSPACE, mod);
+            } else if (c == 27) {
+                vterm_keyboard_key(m_vterm, VTERM_KEY_ESCAPE, mod);
+            } else {
+                vterm_keyboard_unichar(m_vterm, io.InputQueueCharacters[i],
+                                       mod);
+            }
+        }
+    }
 }
 
 void Terminal::_handle_special_keys(const ImGuiIO& io) const {
@@ -776,17 +882,16 @@ void Terminal::_render_alt_screen(ImDrawList* draw_list, const ImVec2& pos,
         }
 
         for (int x = 0; x < m_state.col; x++) {
-            const Glyph& glyph = m_state.lines[y][x];
-            if (glyph.mode & AttrWdummy) {
-                continue;
-            }
+            VTermScreenCell cell;
+            VTermPos vterm_pos{
+                .row = y,
+                .col = x,
+            };
+            vterm_screen_get_cell(m_vterm_screen, vterm_pos, &cell);
 
             ImVec2 char_pos(pos.x + x * char_width, pos.y + y * line_height);
-            _render_glyph(draw_list, glyph, char_pos, char_width, line_height);
-
-            if (glyph.mode & AttrWide) {
-                x++;
-            }
+            _render_vterm_cell(draw_list, cell, char_pos, char_width,
+                               line_height);
         }
     }
 
@@ -795,8 +900,13 @@ void Terminal::_render_alt_screen(ImDrawList* draw_list, const ImVec2& pos,
         ImVec2 cursor_pos(pos.x + m_state.c.x * char_width,
                           pos.y + m_state.c.y * line_height);
         float alpha = (sin(ImGui::GetTime() * 3.14159f) * 0.3f) + 0.5f;
-        _render_cursor(draw_list, cursor_pos,
-                       m_state.lines[m_state.c.y][m_state.c.x], char_width,
+        VTermScreenCell cursor_cell;
+        VTermPos vterm_pos{
+            .row = m_state.c.y,
+            .col = m_state.c.x,
+        };
+        vterm_screen_get_cell(m_vterm_screen, vterm_pos, &cursor_cell);
+        _render_cursor(draw_list, cursor_pos, cursor_cell, char_width,
                        line_height, alpha);
     }
 }
@@ -806,7 +916,7 @@ void Terminal::_render_main_screen(ImDrawList* draw_list, const ImVec2& pos,
     ImVec2 content_size = ImGui::GetContentRegionAvail();
     int visible_rows =
         std::max(1, static_cast<int>(content_size.y / line_height));
-    int total_lines = m_scrollback_buffer.size() + m_state.row;
+    int total_lines = m_sb_buffer.size() + m_state.row;
 
     // Handle scrollback clamping
     int max_scroll = std::max(0, total_lines - visible_rows);
@@ -817,40 +927,37 @@ void Terminal::_render_main_screen(ImDrawList* draw_list, const ImVec2& pos,
     if (m_selection.mode != SelectionIdle && m_selection.ob.x != -1) {
         _render_selection_highlight(draw_list, pos, char_width, line_height,
                                     start_line, start_line + visible_rows,
-                                    m_scrollback_buffer.size());
+                                    m_sb_buffer.size());
     }
 
     // Draw content
     for (int vis_y = 0; vis_y < visible_rows; vis_y++) {
         int current_line = start_line + vis_y;
-        const std::vector<Glyph>* line = nullptr;
 
-        if (current_line < m_scrollback_buffer.size()) {
-            line = &m_scrollback_buffer[current_line];
-        } else {
-            int screen_y = current_line - m_scrollback_buffer.size();
-            if (screen_y >= 0 && screen_y < m_state.lines.size()) {
-                line = &m_state.lines[screen_y];
+        bool use_sb_buffer = current_line < m_sb_buffer.size();
+        int row_idx =
+            use_sb_buffer ? current_line : current_line - m_sb_buffer.size();
+
+        for (int x = 0; x < m_state.col; x++) {
+            VTermScreenCell* cell = nullptr;
+            VTermScreenCell vt_cell;
+            if (use_sb_buffer) {
+                cell = &m_sb_buffer[row_idx][x];
+            } else {
+                VTermPos vterm_pos{
+                    .row = row_idx,
+                    .col = x,
+                };
+                vterm_screen_get_cell(m_vterm_screen, vterm_pos, &vt_cell);
+                cell = &vt_cell;
             }
-        }
-
-        if (!line) {
-            continue;
-        }
-
-        for (int x = 0; x < m_state.col && x < line->size(); x++) {
-            const Glyph& glyph = (*line)[x];
-            if (glyph.mode & AttrWdummy) {
+            if (cell == nullptr) {
                 continue;
             }
-
             ImVec2 char_pos(pos.x + x * char_width,
                             pos.y + vis_y * line_height);
-            _render_glyph(draw_list, glyph, char_pos, char_width, line_height);
-
-            if (glyph.mode & AttrWide) {
-                x++;
-            }
+            _render_vterm_cell(draw_list, *cell, char_pos, char_width,
+                               line_height);
         }
     }
 
@@ -858,12 +965,17 @@ void Terminal::_render_main_screen(ImDrawList* draw_list, const ImVec2& pos,
     if (ImGui::IsWindowFocused() && m_scroll_offset == 0) {
         ImVec2 cursor_pos(pos.x + m_state.c.x * char_width,
                           pos.y + (visible_rows -
-                                   (total_lines - m_scrollback_buffer.size()) +
+                                   (total_lines - m_sb_buffer.size()) +
                                    m_state.c.y) *
                                       line_height);
         float alpha = (sin(ImGui::GetTime() * 3.14159f) * 0.3f) + 0.5f;
-        _render_cursor(draw_list, cursor_pos,
-                       m_state.lines[m_state.c.y][m_state.c.x], char_width,
+        VTermScreenCell cursor_cell;
+        VTermPos vterm_pos{
+            .row = m_state.c.y,
+            .col = m_state.c.x,
+        };
+        vterm_screen_get_cell(m_vterm_screen, vterm_pos, &cursor_cell);
+        _render_cursor(draw_list, cursor_pos, cursor_cell, char_width,
                        line_height, alpha);
     }
 }
@@ -879,8 +991,7 @@ void Terminal::_render_selection_highlight(ImDrawList* draw_list,
             // Current screen line
             for (int x = 0; x < m_state.col; x++) {
                 // Convert visible coordinate to selection coordinate system
-                int selection_y =
-                    screen_offset + screen_y - m_scrollback_buffer.size();
+                int selection_y = screen_offset + screen_y - m_sb_buffer.size();
                 if (selected_text(x, selection_y)) {
                     ImVec2 highlight_pos(pos.x + x * char_width,
                                          pos.y + (y - start_y) * line_height);
@@ -896,11 +1007,11 @@ void Terminal::_render_selection_highlight(ImDrawList* draw_list,
             // Scrollback line - render it if it's visible
             int scrollback_index = -screen_y - 1;
             if (scrollback_index >= 0 &&
-                scrollback_index < m_scrollback_buffer.size()) {
+                scrollback_index < m_sb_buffer.size()) {
                 for (int x = 0; x < m_state.col; x++) {
                     // Convert visible coordinate to selection coordinate system
                     int selection_y =
-                        screen_offset + screen_y - m_scrollback_buffer.size();
+                        screen_offset + screen_y - m_sb_buffer.size();
                     if (selected_text(x, selection_y)) {
                         ImVec2 highlight_pos(pos.x + x * char_width,
                                              pos.y +
@@ -948,31 +1059,119 @@ void Terminal::_render_glyph(ImDrawList* draw_list, const Glyph& glyph,
             ImGui::ColorConvertFloat4ToU32(fg));
     }
 }
+void Terminal::_render_vterm_cell(ImDrawList* draw_list, VTermScreenCell& cell,
+                                  const ImVec2& char_pos, float char_width,
+                                  float line_height) {
+    ImVec4 fg{m_dark_mode ? 1.0f : 0.0f, m_dark_mode ? 1.0f : 0.0f,
+              m_dark_mode ? 1.0f : 0.0f, 1.0f};
+    ImVec4 bg{m_dark_mode ? 0.0f : 1.0f, m_dark_mode ? 0.0f : 1.0f,
+              m_dark_mode ? 0.0f : 1.0f, 1.0f};
+    _handle_vterm_cell_colors(cell, fg, bg);
+
+    // Draw background
+    if (bg.x != 0 || bg.y != 0 || bg.z != 0 || (cell.attrs.reverse)) {
+        draw_list->AddRectFilled(
+            char_pos, ImVec2(char_pos.x + char_width, char_pos.y + line_height),
+            ImGui::ColorConvertFloat4ToU32(bg));
+    }
+
+    // Draw character
+    if (cell.width > 0) {
+        char text[g_utf_size] = {0};
+        size_t len = 0;
+        for (char i = 0; i < cell.width; i++) {
+            len += _utf8_encode(cell.chars[i], &text[len]);
+        }
+        draw_list->AddText(char_pos, ImGui::ColorConvertFloat4ToU32(fg), text);
+    }
+
+    // Draw underline
+    if (cell.attrs.underline) {
+        draw_list->AddLine(
+            ImVec2(char_pos.x, char_pos.y + line_height - 1),
+            ImVec2(char_pos.x + char_width, char_pos.y + line_height - 1),
+            ImGui::ColorConvertFloat4ToU32(fg));
+    }
+}
+
+void Terminal::_handle_vterm_cell_colors(VTermScreenCell& cell, ImVec4& fg,
+                                         ImVec4& bg) {
+    if (VTERM_COLOR_IS_DEFAULT_FG(&cell.fg)) {
+        fg.x = m_dark_mode ? 1.0f : 0.0f;
+        fg.y = m_dark_mode ? 1.0f : 0.0f;
+        fg.z = m_dark_mode ? 1.0f : 0.0f;
+        fg.w = 1.0f;
+    }
+    if (VTERM_COLOR_IS_INDEXED(&cell.fg)) {
+        auto index = cell.fg.indexed.idx;
+        if (index < 16) {
+            fg = m_default_color_map[index];
+        }
+    }
+    if (VTERM_COLOR_IS_RGB(&cell.fg)) {
+        vterm_screen_convert_color_to_rgb(m_vterm_screen, &cell.fg);
+        fg.x = static_cast<float>(cell.fg.rgb.red) / 256.0f;
+        fg.y = static_cast<float>(cell.fg.rgb.green) / 256.0f;
+        fg.z = static_cast<float>(cell.fg.rgb.blue) / 256.0f;
+        fg.w = 1.0f;
+    }
+    if (VTERM_COLOR_IS_DEFAULT_BG(&cell.bg)) {
+        bg.x = m_dark_mode ? 0.0f : 1.0f;
+        bg.y = m_dark_mode ? 0.0f : 1.0f;
+        bg.z = m_dark_mode ? 0.0f : 1.0f;
+        bg.w = 1.0f;
+    }
+    if (VTERM_COLOR_IS_INDEXED(&cell.bg)) {
+        auto index = cell.bg.indexed.idx;
+        if (index < 16) {
+            bg = m_default_color_map[index];
+        }
+    }
+    if (VTERM_COLOR_IS_RGB(&cell.bg)) {
+        vterm_screen_convert_color_to_rgb(m_vterm_screen, &cell.bg);
+        bg.x = static_cast<float>(cell.bg.rgb.red) / 256.0f;
+        bg.y = static_cast<float>(cell.bg.rgb.green) / 256.0f;
+        bg.z = static_cast<float>(cell.bg.rgb.blue) / 256.0f;
+        bg.w = 1.0f;
+    }
+}
 
 void Terminal::_render_cursor(ImDrawList* draw_list, const ImVec2& cursor_pos,
-                              const Glyph& cursor_cell, float char_width,
-                              float line_height, float alpha) const {
+                              VTermScreenCell& cursor_cell, float char_width,
+                              float line_height, float alpha) {
     if (m_state.mode & ModeInsert) {
         draw_list->AddRectFilled(
             cursor_pos, ImVec2(cursor_pos.x + 2, cursor_pos.y + line_height),
             ImGui::ColorConvertFloat4ToU32(ImVec4(0.7f, 0.7f, 0.7f, alpha)));
-    } else if (cursor_cell.u != 0) {
+    } else if (cursor_cell.chars[0] != '\0') {
         char text[g_utf_size] = {0};
-        _utf8_encode(cursor_cell.u, text);
-        ImVec4 bg = cursor_cell.fg;
-        ImVec4 fg = cursor_cell.bg;
+        size_t len = 0;
+        for (char i = 0; i < cursor_cell.width; i++) {
+            len += _utf8_encode(cursor_cell.chars[i], &text[len]);
+        }
+        ImVec4 fg{m_dark_mode ? 1.0f : 0.0f, m_dark_mode ? 1.0f : 0.0f,
+                  m_dark_mode ? 1.0f : 0.0f, 1.0f};
+        ImVec4 bg{m_dark_mode ? 0.0f : 1.0f, m_dark_mode ? 0.0f : 1.0f,
+                  m_dark_mode ? 0.0f : 1.0f, 1.0f};
+        _handle_vterm_cell_colors(cursor_cell, fg, bg);
 
+        ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
+                            m_dark_mode ? 0.7f : 0.3f,
+                            m_dark_mode ? 0.7f : 0.3f, alpha};
         draw_list->AddRectFilled(
             cursor_pos,
             ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
-            ImGui::ColorConvertFloat4ToU32(ImVec4(bg.x, bg.y, bg.z, alpha)));
+            ImGui::ColorConvertFloat4ToU32(cursor_color));
         draw_list->AddText(cursor_pos, ImGui::ColorConvertFloat4ToU32(fg),
                            text);
     } else {
+        ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
+                            m_dark_mode ? 0.7f : 0.3f,
+                            m_dark_mode ? 0.7f : 0.3f, alpha};
         draw_list->AddRectFilled(
             cursor_pos,
             ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
-            ImGui::ColorConvertFloat4ToU32(ImVec4(0.7f, 0.7f, 0.7f, alpha)));
+            ImGui::ColorConvertFloat4ToU32(cursor_color));
     }
 }
 
@@ -1040,47 +1239,60 @@ void Terminal::_get_selection(std::string& selected) {
     }
 
     // Convert selection coordinates to absolute buffer positions
-    int sel_start_y = m_scrollback_buffer.size() + m_selection.nb.y;
-    int sel_end_y = m_scrollback_buffer.size() + m_selection.ne.y;
+    int sel_start_y = m_sb_buffer.size() + m_selection.nb.y;
+    int sel_end_y = m_sb_buffer.size() + m_selection.ne.y;
 
     for (int abs_y = sel_start_y; abs_y <= sel_end_y; abs_y++) {
-        const std::vector<Glyph>* line = nullptr;
+        const std::vector<VTermScreenCell>* line = nullptr;
 
+        bool use_sb_buffer = abs_y < m_sb_buffer.size();
+        int row_idx = use_sb_buffer ? abs_y : abs_y - m_sb_buffer.size();
         // Determine which buffer this line is in
-        if (abs_y < m_scrollback_buffer.size()) {
+        if (abs_y < m_sb_buffer.size()) {
             // Line is in scrollback buffer
-            line = &m_scrollback_buffer[abs_y];
-        } else {
-            // Line is in current screen buffer
-            int screen_y = abs_y - m_scrollback_buffer.size();
-            if (screen_y >= 0 && screen_y < m_state.lines.size()) {
-                line = &m_state.lines[screen_y];
-            }
-        }
-
-        if (!line) {
-            continue;
+            line = &m_sb_buffer[abs_y];
         }
 
         int xstart = (abs_y == sel_start_y) ? m_selection.nb.x : 0;
         int xend = (abs_y == sel_end_y) ? m_selection.ne.x : m_state.col - 1;
 
         // Clamp xstart and xend to line size
-        xstart = std::clamp(xstart, 0, static_cast<int>(line->size()) - 1);
-        xend = std::clamp(xend, 0, static_cast<int>(line->size()) - 1);
+        if (line != nullptr) {
+            xstart = std::clamp(xstart, 0, static_cast<int>(line->size()) - 1);
+            xend = std::clamp(xend, 0, static_cast<int>(line->size()) - 1);
+        }
 
         for (int x = xstart; x <= xend; x++) {
-            if ((*line)[x].mode & AttrWdummy) {
+            VTermScreenCell* cell = nullptr;
+            VTermScreenCell vt_cell;
+            // Determine which buffer this cell is in
+            if (use_sb_buffer) {
+                // Cell is in scrollback buffer
+                cell = &m_sb_buffer[row_idx][x];
+            } else {
+                // Cell is in current screen buffer
+                VTermPos vterm_pos{
+                    .row = row_idx,
+                    .col = x,
+                };
+                vterm_screen_get_cell(m_vterm_screen, vterm_pos, &vt_cell);
+                cell = &vt_cell;
+            }
+            if (cell == nullptr) {
                 continue;
             }
 
             char buf[g_utf_size];
-            size_t len = _utf8_encode((*line)[x].u, buf);
+            size_t len = 0;
+            for (char i = 0; i < cell->width; i++) {
+                len += _utf8_encode(cell->chars[i], &buf[len]);
+            }
             selected.append(buf, len);
         }
 
-        if (abs_y < sel_end_y)
+        if (abs_y < sel_end_y) {
             selected += '\n';
+        }
     }
 }
 
@@ -1418,6 +1630,27 @@ void Terminal::_add_to_scrollback(const std::vector<Glyph>& line) {
         m_scrollback_buffer.erase(m_scrollback_buffer.begin());
     }
 }
+
+void Terminal::_add_to_scrollback(int cols, const VTermScreenCell* cells) {
+    auto c = static_cast<size_t>(cols);
+    std::vector<VTermScreenCell> line(cells, cells + c);
+    m_sb_buffer.emplace_back(line);
+    if (m_sb_buffer.size() > m_max_scrollback_lines) {
+        m_sb_buffer.erase(m_sb_buffer.begin());
+    }
+}
+
+int Terminal::_pop_from_scrollback(int cols, VTermScreenCell* cells) {
+    if (m_sb_buffer.empty()) {
+        return 0;
+    }
+    auto& back = m_sb_buffer.back();
+    std::copy(back.begin(), back.end(), cells);
+    m_sb_buffer.pop_back();
+    return 1;
+}
+
+void Terminal::_scrollback_clear() { m_sb_buffer.clear(); }
 
 void Terminal::_parse_csi_param(CSIEscape& csi) {
     char* p = csi.buf;
@@ -2325,4 +2558,71 @@ size_t Terminal::_utf8_encode(Rune u, char* c) {
 
     return len;
 }
+
+#pragma region vterm callbacks
+int Terminal::_vterm_settermprop(VTermProp prop, VTermValue* val, void* data) {
+    // TODO: other prop.
+    auto* self = static_cast<Terminal*>(data);
+    switch (prop) {
+    case VTERM_PROP_ALTSCREEN:
+        self->_set_mode(val->boolean, ModeAltscreen);
+        break;
+    default:
+        return 0;
+    }
+    return 1;
+}
+
+int Terminal::_vterm_damage(VTermRect rect, void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    self->_clear_region(rect.start_col, rect.start_row, rect.end_col,
+                        rect.end_row);
+    return 1;
+}
+
+int Terminal::_vterm_moverect(VTermRect dest, VTermRect src, void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    self->_clear_region(std::min(dest.start_col, src.start_col),
+                        std::min(dest.start_row, src.start_row),
+                        std::max(dest.end_col, src.end_col),
+                        std::max(dest.end_row, src.end_row));
+    return 1;
+}
+
+int Terminal::_vterm_movecursor(VTermPos new_pos, VTermPos old_pos, int visible,
+                                void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    self->_move_to(new_pos.col, new_pos.row);
+    return 1;
+}
+
+int Terminal::_vterm_bell(void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    self->_ring_bell();
+    return 1;
+}
+
+int Terminal::_vterm_sb_pushline(int cols, const VTermScreenCell* cells,
+                                 void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    self->_add_to_scrollback(cols, cells);
+    return 1;
+}
+
+int Terminal::_vterm_sb_popline(int cols, VTermScreenCell* cells, void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    return self->_pop_from_scrollback(cols, cells);
+}
+
+int Terminal::_vterm_sb_clear(void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    self->_scrollback_clear();
+    return 1;
+}
+
+void Terminal::_vterm_output(const char* s, size_t len, void* data) {
+    auto* self = static_cast<Terminal*>(data);
+    self->m_pty->write(s, len);
+}
+#pragma endregion
 } // namespace ImNeovim

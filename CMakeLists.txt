@@ -141,6 +141,7 @@ target_link_libraries(
     im_neovim
     PRIVATE
     ImApp::ImApp
+    libvterm
 )
 
 target_include_directories(

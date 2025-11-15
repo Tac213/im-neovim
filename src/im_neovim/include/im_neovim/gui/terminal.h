@@ -8,6 +8,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include <vterm.h>
 
 namespace ImNeovim {
 using uchar = unsigned char;
@@ -188,8 +189,13 @@ class Terminal {
                                      int start_y, int end_y,
                                      int screen_offset = 0);
     void _render_cursor(ImDrawList* draw_list, const ImVec2& cursor_pos,
-                        const Glyph& cursor_cell, float char_width,
-                        float line_height, float alpha) const;
+                        VTermScreenCell& cursor_cell, float char_width,
+                        float line_height, float alpha);
+    void _render_vterm_cell(ImDrawList* draw_list, VTermScreenCell& cell,
+                            const ImVec2& char_pos, float char_width,
+                            float line_height);
+    void _handle_vterm_cell_colors(VTermScreenCell& cell, ImVec4& fg,
+                                   ImVec4& bg);
     static void _render_glyph(ImDrawList* draw_list, const Glyph& glyph,
                               const ImVec2& char_pos, float char_width,
                               float line_height);
@@ -220,6 +226,9 @@ class Terminal {
     void _cursor_load();
 
     void _add_to_scrollback(const std::vector<Glyph>& line);
+    void _add_to_scrollback(int cols, const VTermScreenCell* cells);
+    int _pop_from_scrollback(int cols, VTermScreenCell* cells);
+    void _scrollback_clear();
 
     struct CSIEscape {
         char buf[256];         // Raw string
@@ -257,6 +266,20 @@ class Terminal {
                                                0x10FFFF};
     static const Rune g_utf_invalid = 0xFFFD; // Unicode replacement character
 
+    // vterm callback
+    VTermScreenCallbacks m_vterm_screen_callbacks;
+    static int _vterm_settermprop(VTermProp prop, VTermValue* val, void* data);
+    static int _vterm_damage(VTermRect rect, void* data);
+    static int _vterm_moverect(VTermRect dest, VTermRect src, void* data);
+    static int _vterm_movecursor(VTermPos new_pos, VTermPos old_pos,
+                                 int visible, void* data);
+    static int _vterm_bell(void* data);
+    static int _vterm_sb_pushline(int cols, const VTermScreenCell* cells,
+                                  void* data);
+    static int _vterm_sb_popline(int cols, VTermScreenCell* cells, void* data);
+    static int _vterm_sb_clear(void* data);
+    static void _vterm_output(const char* s, size_t len, void* data);
+
     // Terminal state
     struct TermState {
         TCursor c;                          // Current cursor
@@ -275,6 +298,7 @@ class Terminal {
         std::vector<bool> dirty;                   // dirtyness of lines
         std::vector<bool> tabs;                    // Tab stops
     } m_state;
+    bool m_dark_mode = true;
 
     static constexpr float g_drag_threshold = 3.0f;
     Selection m_selection;
@@ -296,11 +320,16 @@ class Terminal {
     // PTY information
     std::shared_ptr<ImApp::PseudoTerminal> m_pty{nullptr};
 
+    // libvterm related
+    VTerm* m_vterm{nullptr};
+    VTermScreen* m_vterm_screen{nullptr};
+
     float m_last_font_size = 0;
 
     TCursor m_saved_cursor; // For cursor save/restore
 
     std::vector<std::vector<Glyph>> m_scrollback_buffer;
+    std::vector<std::vector<VTermScreenCell>> m_sb_buffer;
     size_t m_max_scrollback_lines = 10000;
     int m_scroll_offset = 0;
 
