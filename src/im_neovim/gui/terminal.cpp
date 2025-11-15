@@ -721,6 +721,12 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
             static_cast<std::underlying_type_t<VTermModifier>>(VTERM_MOD_ALT));
     }
     static const std::pair<ImGuiKey, VTermKey> s_key_map[] = {
+#if !defined(_WIN32)
+        {ImGuiKey_Enter, VTERM_KEY_ENTER},
+        {ImGuiKey_Tab, VTERM_KEY_TAB},
+        {ImGuiKey_Backspace, VTERM_KEY_BACKSPACE},
+        {ImGuiKey_Escape, VTERM_KEY_ESCAPE},
+#endif
         {ImGuiKey_UpArrow, VTERM_KEY_UP},
         {ImGuiKey_DownArrow, VTERM_KEY_DOWN},
         {ImGuiKey_LeftArrow, VTERM_KEY_LEFT},
@@ -764,6 +770,7 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
         const auto& cc = io.InputQueueCharacters[i];
         char c = static_cast<char>(io.InputQueueCharacters[i]);
         if (c != 0) {
+#if defined(_WIN32)
             if (c == '\r') {
                 vterm_keyboard_key(m_vterm, VTERM_KEY_ENTER, mod);
             } else if (c == '\t') {
@@ -773,9 +780,12 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
             } else if (c == 27) {
                 vterm_keyboard_key(m_vterm, VTERM_KEY_ESCAPE, mod);
             } else {
+#endif
                 vterm_keyboard_unichar(m_vterm, io.InputQueueCharacters[i],
                                        mod);
+#if defined(_WIN32)
             }
+#endif
         }
     }
 }
