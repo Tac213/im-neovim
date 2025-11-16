@@ -21,7 +21,7 @@ if(NOT TARGET spdlog)
     set_target_properties(spdlog PROPERTIES FOLDER ${third_party_folder}/spdlog)
 endif()
 
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux" AND NOT TARGET glfw)
+if((${CMAKE_SYSTEM_NAME} STREQUAL "Linux" OR ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin") AND NOT TARGET glfw)
     option(GLFW_BUILD_EXAMPLES "" OFF)
     option(GLFW_BUILD_TESTS "" OFF)
     option(GLFW_BUILD_DOCS "" OFF)

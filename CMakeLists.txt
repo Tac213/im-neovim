@@ -71,6 +71,24 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     )
 endif()
 
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    find_library(METAL_FRAMEWORK Metal required)
+    find_library(QUARTZ_CORE_FRAMEWORK QuartzCore required)
+    set(im_app_platform_dir "${im_app_dir}/platforms/darwin")
+    list(APPEND im_app_platform_specific_files
+        "${im_app_platform_dir}/darwin_file_system.mm"
+        "${im_app_platform_dir}/darwin_window.h"
+        "${im_app_platform_dir}/darwin_window.cpp"
+        "${im_app_platform_dir}/metal_context.h"
+        "${im_app_platform_dir}/metal_context.mm"
+        "${im_app_platform_dir}/darwin_metal_imgui_renderer.h"
+        "${im_app_platform_dir}/darwin_metal_imgui_renderer.mm"
+        "${im_app_platform_dir}/main.cpp"
+        "${im_app_platform_dir}/darwin_pty.h"
+        "${im_app_platform_dir}/darwin_pty.cpp"
+    )
+endif()
+
 add_library(im_app STATIC
     ${im_app_public_files}
     ${im_app_private_files}
@@ -113,6 +131,16 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         im_app
         PRIVATE
         glfw
+    )
+endif()
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    target_link_libraries(
+        im_app
+        PRIVATE
+        glfw
+        ${METAL_FRAMEWORK}
+        ${QUARTZ_CORE_FRAMEWORK}
     )
 endif()
 

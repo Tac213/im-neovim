@@ -43,6 +43,15 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     )
 endif()
 
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    set(imgui_platform_specific_files
+        ${imgui_source_dir}/backends/imgui_impl_glfw.cpp
+        ${imgui_source_dir}/backends/imgui_impl_glfw.h
+        ${imgui_source_dir}/backends/imgui_impl_metal.mm
+        ${imgui_source_dir}/backends/imgui_impl_metal.h
+    )
+endif()
+
 add_library(imgui STATIC
     ${imgui_sources}
     ${imgui_backends}
@@ -65,6 +74,15 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         PRIVATE
         glfw
         X11::X11
+    )
+endif()
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    find_library(METAL_FRAMEWORK Metal required)
+    target_link_libraries(imgui
+        PRIVATE
+        glfw
+        ${METAL_FRAMEWORK}
     )
 endif()
 
