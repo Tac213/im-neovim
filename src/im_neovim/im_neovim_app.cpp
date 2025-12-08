@@ -11,6 +11,11 @@
 namespace ImNeovim {
 class MyLayer : public ImApp::Layer {
   public:
+    void on_attach() override {
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigWindowsMoveFromTitleBarOnly = true;
+    }
+
     void on_imgui_render() override {
         ImGui::ShowDemoWindow();
         m_terminal.render();
@@ -19,6 +24,7 @@ class MyLayer : public ImApp::Layer {
   private:
     Terminal m_terminal;
 };
+
 static void initialize_logger() {
     auto stdout_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 #if defined(IM_NVIM_DEBUG)

@@ -5,10 +5,6 @@
 
 namespace ImNeovim {
 #define BETWEEN(x, a, b) ((a) <= (x) && (x) <= (b))
-#define MODBIT(x, set, bit) ((set) ? ((x) |= (bit)) : ((x) &= ~(bit)))
-#define ISCONTROLC0(c) (BETWEEN(c, 0, 0x1f) || (c) == 0x7f)
-#define ISCONTROLC1(c) (BETWEEN(c, 0x80, 0x9f))
-#define ISCONTROL(c) (ISCONTROLC0(c) || ISCONTROLC1(c))
 
 Terminal::Terminal() : m_window_title("Terminal"), m_dark_mode(true) {
     m_pty = ImApp::PseudoTerminal::create();
@@ -372,7 +368,11 @@ void Terminal::_handle_mouse_input(const ImGuiIO& io) {
     }
 
     // Handle clipboard shortcuts
+#if defined(IM_APP_DARWIN)
+    if (io.KeySuper) {
+#else
     if (io.KeyCtrl) {
+#endif
         if (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
             ImGui::IsKeyPressed(ImGuiKey_C, false)) {
             _copy_selection();
