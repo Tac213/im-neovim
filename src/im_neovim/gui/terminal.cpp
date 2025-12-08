@@ -773,12 +773,10 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
             vterm_keyboard_key(m_vterm, vterm_key, mod);
         }
     }
-#if !defined(IM_APP_WIN32)
-    // Ctrl + C on non-win32.
     if (io.InputQueueCharacters.Size == 0 && ImGui::IsKeyPressed(ImGuiKey_C)) {
+        // Ctrl + C
         vterm_keyboard_unichar(m_vterm, 'c', mod);
     }
-#endif
     for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
         const auto& cc = io.InputQueueCharacters[i];
         char c = static_cast<char>(io.InputQueueCharacters[i]);
