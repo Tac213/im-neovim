@@ -368,11 +368,7 @@ void Terminal::_handle_mouse_input(const ImGuiIO& io) {
     }
 
     // Handle clipboard shortcuts
-#if defined(IM_APP_DARWIN)
-    if (io.KeySuper) {
-#else
     if (io.KeyCtrl) {
-#endif
         if (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
             ImGui::IsKeyPressed(ImGuiKey_C, false)) {
             _copy_selection();
