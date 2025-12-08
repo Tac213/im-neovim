@@ -124,6 +124,9 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         dxguid.lib
         Microsoft::DirectX-Headers
     )
+    target_compile_definitions(im_app PUBLIC
+        IM_APP_WIN32=1
+    )
 endif()
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
@@ -131,6 +134,9 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         im_app
         PRIVATE
         glfw
+    )
+    target_compile_definitions(im_app PUBLIC
+        IM_APP_LINUX=1
     )
 endif()
 
@@ -141,6 +147,9 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
         glfw
         ${METAL_FRAMEWORK}
         ${QUARTZ_CORE_FRAMEWORK}
+    )
+    target_compile_definitions(im_app PUBLIC
+        IM_APP_DARWIN=1
     )
 endif()
 

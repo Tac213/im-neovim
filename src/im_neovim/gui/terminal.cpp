@@ -269,6 +269,9 @@ bool Terminal::selected_text(int x, int y) {
 
 void Terminal::paste_from_clipboard() const {
     const char* text = ImGui::GetClipboardText();
+    if (text == nullptr) {
+        return;
+    }
 
     if (m_state.mode & ModeBracketpaste) {
         // Send paste start sequence
@@ -704,7 +707,11 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
         return;
     }
     VTermModifier mod = VTERM_MOD_NONE;
+#if defined(IM_APP_DARWIN)
+    if (io.KeySuper) {
+#else
     if (io.KeyCtrl) {
+#endif
         mod = static_cast<VTermModifier>(
             static_cast<std::underlying_type_t<VTermModifier>>(mod) |
             static_cast<std::underlying_type_t<VTermModifier>>(VTERM_MOD_CTRL));
@@ -721,7 +728,7 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
             static_cast<std::underlying_type_t<VTermModifier>>(VTERM_MOD_ALT));
     }
     static const std::pair<ImGuiKey, VTermKey> s_key_map[] = {
-#if !defined(_WIN32)
+#if !defined(IM_APP_WIN32)
         {ImGuiKey_Enter, VTERM_KEY_ENTER},
         {ImGuiKey_Tab, VTERM_KEY_TAB},
         {ImGuiKey_Backspace, VTERM_KEY_BACKSPACE},
@@ -766,11 +773,17 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
             vterm_keyboard_key(m_vterm, vterm_key, mod);
         }
     }
+#if defined(IM_APP_DARWIN)
+    // Ctrl + C on darwin.
+    if (io.InputQueueCharacters.Size == 0 && ImGui::IsKeyPressed(ImGuiKey_C)) {
+        vterm_keyboard_unichar(m_vterm, 'c', mod);
+    }
+#endif
     for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
         const auto& cc = io.InputQueueCharacters[i];
         char c = static_cast<char>(io.InputQueueCharacters[i]);
         if (c != 0) {
-#if defined(_WIN32)
+#if defined(IM_APP_WIN32)
             if (c == '\r') {
                 vterm_keyboard_key(m_vterm, VTERM_KEY_ENTER, mod);
             } else if (c == '\t') {
@@ -783,7 +796,7 @@ void Terminal::_handle_keyboard_input(const ImGuiIO& io) const {
 #endif
                 vterm_keyboard_unichar(m_vterm, io.InputQueueCharacters[i],
                                        mod);
-#if defined(_WIN32)
+#if defined(IM_APP_WIN32)
             }
 #endif
         }
