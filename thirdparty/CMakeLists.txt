@@ -60,3 +60,85 @@ if(NOT TARGET libvterm)
     include(libvterm.cmake)
     set_target_properties(libvterm PROPERTIES FOLDER ${third_party_folder}/libvterm)
 endif()
+
+if(NOT TARGET nvim)
+    set(NVIM_URL "https://github.com/neovim/neovim/archive/refs/tags/nightly.zip")
+    set(NVIM_SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/neovim-src")
+    set(NVIM_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/neovim-build")
+    set(NVIM_INSTALL_DIR "${CMAKE_CURRENT_BINARY_DIR}/neovim-install")
+
+    message(STATUS ${PROJECT_BINARY_DIR})
+    message(STATUS ${CMAKE_CURRENT_BINARY_DIR})
+
+    include(ExternalProject)
+
+    if(MSVC)
+        ExternalProject_Add(neovim
+            URL "${NVIM_URL}"
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            SOURCE_DIR "${NVIM_SOURCE_DIR}"
+            BINARY_DIR "${NVIM_BINARY_DIR}"
+            CMAKE_ARGS "-DCMAKE_C_FLAGS=/utf-8" "-DCMAKE_INSTALL_PREFIX=${NVIM_INSTALL_DIR}"
+            LOG_DOWNLOAD ON
+            LOG_CONFIGURE ON
+            LOG_BUILD ON
+            LOG_INSTALL ON
+        )
+    else()
+        ExternalProject_Add(neovim
+            URL "${NVIM_URL}"
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            SOURCE_DIR "${NVIM_SOURCE_DIR}"
+            BINARY_DIR "${NVIM_BINARY_DIR}"
+            CMAKE_ARGS "-DCMAKE_INSTALL_PREFIX=${NVIM_INSTALL_DIR}"
+            LOG_DOWNLOAD ON
+            LOG_CONFIGURE ON
+            LOG_BUILD ON
+            LOG_INSTALL ON
+        )
+    endif()
+
+    ExternalProject_Add_Step(neovim configure_deps
+        COMMAND ${CMAKE_COMMAND} -G ${CMAKE_GENERATOR}
+        -D CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+        -D CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+        -D CMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+        -D CMAKE_C_FLAGS_DEBUG=${CMAKE_C_FLAGS_DEBUG}
+        -D CMAKE_C_FLAGS_MINSIZEREL=${CMAKE_C_FLAGS_MINSIZEREL}
+        -D CMAKE_C_FLAGS_RELWITHDEBINFO=${CMAKE_C_FLAGS_RELWITHDEBINFO}
+        -D CMAKE_C_FLAGS_RELEASE=${CMAKE_C_FLAGS_RELEASE}
+        -D CMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -S ${NVIM_SOURCE_DIR}/cmake.deps
+        -B ${NVIM_SOURCE_DIR}/.deps
+        COMMENT "Performing configure deps step for 'neovim'"
+        DEPENDEES patch
+        LOG ON
+        WORKING_DIRECTORY ${NVIM_SOURCE_DIR}
+    )
+    ExternalProject_Add_Step(neovim build_deps
+        COMMAND ${CMAKE_COMMAND} --build ${NVIM_SOURCE_DIR}/.deps --config ${CMAKE_BUILD_TYPE}
+        COMMENT "Performing build deps step for 'neovim'"
+        DEPENDEES configure_deps
+        DEPENDERS configure
+        LOG ON
+        WORKING_DIRECTORY ${NVIM_SOURCE_DIR}
+    )
+
+    if(MSVC)
+        set(LIB_NVIM_PATH "${NVIM_BINARY_DIR}/lib/nvim.lib")
+    else()
+        set(LIB_NVIM_PATH "${NVIM_BINARY_DIR}/lib/libnvim.a")
+    endif()
+
+    add_library(libnvim STATIC IMPORTED GLOBAL)
+    set_target_properties(libnvim PROPERTIES IMPORTED_LOCATION ${LIB_NVIM_PATH})
+    target_include_directories(libnvim
+        INTERFACE
+        "${NVIM_BINARY_DIR}/src/nvim/auto"
+        "${NVIM_BINARY_DIR}/include"
+        "${NVIM_BINARY_DIR}/cmake.config"
+        "${NVIM_SOURCE_DIR}/src"
+    )
+    add_dependencies(libnvim neovim)
+endif()
