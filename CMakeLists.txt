@@ -167,6 +167,8 @@ set(im_neovim_private_files
     "${im_neovim_private_header_dir}/im_neovim/gui/terminal.h"
     "${im_neovim_dir}/im_neovim_app.cpp"
     "${im_neovim_dir}/gui/terminal.cpp"
+    "${im_neovim_dir}/layers/layer_libuv.h"
+    "${im_neovim_dir}/layers/layer_libuv.cpp"
 )
 
 add_executable(im_neovim
@@ -179,6 +181,7 @@ target_link_libraries(
     PRIVATE
     ImApp::ImApp
     libvterm
+    libuv::libuv
 )
 
 target_include_directories(

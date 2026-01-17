@@ -142,3 +142,7 @@ if(NOT TARGET nvim)
     )
     add_dependencies(libnvim neovim)
 endif()
+
+if(NOT TARGET libuv)
+    add_subdirectory(libuv)
+endif()
