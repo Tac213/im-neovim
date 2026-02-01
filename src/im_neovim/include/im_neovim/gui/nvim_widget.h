@@ -31,6 +31,14 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
     void _spawn_nvim();
     void _initialize();
     void _set_nvim_attached(bool attached);
+    void _handle_nvim_request(const uint32_t& msgid, const char* method,
+                              msgpack::object_array& args);
+    void _handle_nvim_notification(const char* event,
+                                   msgpack::object_array& args);
+
+    void _handle_nvim_redraw(const char* operation,
+                             msgpack::object_array& args);
+    void _handle_nvim_gui_event(const char* event, msgpack::object_array& args);
 
     /* GUI-related methods */
     void _check_font_size_changed();
@@ -52,7 +60,7 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
 
     /* RPC-related methods */
     void _send_nvim_error(const msgpack::object& req, const std::string& msg);
-    void _send_nvim_error(uint64_t msgid, const std::string& msg);
+    void _send_nvim_error(uint32_t msgid, const std::string& msg);
     void _handle_nvim_rpc(const std::vector<char>& msgpack_data);
     void _dispatch(msgpack::object& req);
     void _dispatch_request(msgpack::object& req);

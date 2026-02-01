@@ -252,6 +252,60 @@ void NvimWidget::_set_nvim_attached(bool attached) {
     m_nvim_attached = attached;
 }
 
+void NvimWidget::_handle_nvim_request(const uint32_t& msgid, const char* method,
+                                      msgpack::object_array& args) {}
+
+void NvimWidget::_handle_nvim_notification(const char* event,
+                                           msgpack::object_array& args) {
+    if (strcmp(event, "redraw") == 0) {
+        LOG_DEBUG("Nvim redraw event.");
+        for (size_t i = 0; i < args.size; i++) {
+            auto& arg = args.ptr[i];
+            if (arg.type != msgpack::type::ARRAY) {
+                LOG_WARN("Received unexpected redraw operation, argument is "
+                         "not an array.");
+                continue;
+            }
+            if (arg.via.array.size < 2) {
+                LOG_WARN("Received unexpected redraw operation, size of the "
+                         "argument array is less than 2.");
+                continue;
+            }
+            if (arg.via.array.ptr[0].type != msgpack::type::STR) {
+                LOG_WARN("Received unexpected redraw operation, the first item "
+                         "of the argument array is not a string.");
+                continue;
+            }
+            if (arg.via.array.ptr[1].type != msgpack::type::ARRAY) {
+                LOG_WARN("Received unexpected redraw operation, the second "
+                         "item of the argument array is not an array.");
+                continue;
+            }
+            std::string operation = arg.via.array.ptr[0].as<std::string>();
+
+            for (size_t i = 1; i < arg.via.array.size; i++) {
+                auto& op_args = arg.via.array.ptr[i];
+                if (op_args.type != msgpack::type::ARRAY) {
+                    LOG_WARN("Received unexpected redraw operation '{}', "
+                             "operation argument is not an array.",
+                             operation);
+                    continue;
+                }
+                _handle_nvim_redraw(operation.c_str(), op_args.via.array);
+            }
+        }
+    } else if (strcmp(event, "Gui") == 0 && args.size > 0) {
+        std::string gui_event = args.ptr[0].as<std::string>();
+        _handle_nvim_gui_event(gui_event.c_str(), args);
+    }
+}
+
+void NvimWidget::_handle_nvim_redraw(const char* operation,
+                                     msgpack::object_array& args) {}
+
+void NvimWidget::_handle_nvim_gui_event(const char* event,
+                                        msgpack::object_array& args) {}
+
 void NvimWidget::_check_font_size_changed() {
     float current_font_size = ImGui::GetFontBaked()->Size;
     if (current_font_size != m_last_font_size) {
@@ -283,11 +337,11 @@ void NvimWidget::_send_nvim_error(const msgpack::object& req,
     if (req.via.array.ptr[0].as<uint64_t>() != 0) {
         LOG_ERROR("Errors can only be sent as replies to Requests(type=0)");
     }
-    uint64_t msgid = req.via.array.ptr[1].as<uint64_t>();
-    _send_nvim_error(req.via.array.ptr[1].as<uint64_t>(), msg);
+    uint32_t msgid = req.via.array.ptr[1].as<uint32_t>();
+    _send_nvim_error(msgid, msg);
 }
 
-void NvimWidget::_send_nvim_error(uint64_t msgid, const std::string& msg) {
+void NvimWidget::_send_nvim_error(uint32_t msgid, const std::string& msg) {
     // [type(1), msgid, error, result(nil)]
     std::stringstream buffer;
     msgpack::packer<std::stringstream> packer(buffer);
@@ -373,6 +427,16 @@ void NvimWidget::_dispatch(msgpack::object& req) {
         _dispatch_response(req);
         break;
     case 2:
+        if (req.via.array.ptr[1].type != msgpack::type::STR) {
+            LOG_ERROR("Invalid nvim notification: event MUST be a string.");
+            _send_nvim_error(req, "event must be a string.");
+            return;
+        }
+        if (req.via.array.ptr[2].type != msgpack::type::ARRAY) {
+            LOG_ERROR("Invalid nvim notification: arguments MUST be an array.");
+            _send_nvim_error(req, "Arguments must be a array.");
+            return;
+        }
         _dispatch_notification(req);
         break;
     default:
@@ -386,6 +450,9 @@ void NvimWidget::_dispatch_request(msgpack::object& req) {
      * [type(0), msgid(uint), method(str), args(object_array)]
      * See: `serialize_request` in 'nvim/msgpack_rpc/channel.c'
      */
+    uint32_t msgid = req.via.array.ptr[1].as<uint32_t>();
+    std::string method = req.via.array.ptr[2].as<std::string>();
+    _handle_nvim_request(msgid, method.c_str(), req.via.array.ptr[3].via.array);
 }
 
 void NvimWidget::_dispatch_response(msgpack::object& resp) {
@@ -429,6 +496,8 @@ void NvimWidget::_dispatch_notification(msgpack::object& nt) {
      * [type(0), method(str), args(object_array)]
      * See: `serialize_request` in 'nvim/msgpack_rpc/channel.c'
      */
+    std::string event = nt.via.array.ptr[1].as<std::string>();
+    _handle_nvim_notification(event.c_str(), nt.via.array.ptr[2].via.array);
 }
 
 void NvimWidget::_on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
