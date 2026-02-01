@@ -2,10 +2,13 @@
 #include "im_neovim/globals.h"
 #include "im_neovim/logging.h"
 #include <im_app/file_system.h>
-#include <sstream>
 
 namespace ImNeovim {
-NvimWidget::NvimWidget() {
+NvimWidget::NvimWidget() : m_window_title("nvim") {
+    // Initialize with safe default size
+    m_state.row = 24;
+    m_state.col = 80;
+
     m_nvim_proc.data = nullptr;
     m_nvim_proc.pid = 0;
     m_in_pipe.data = nullptr;
@@ -29,7 +32,56 @@ NvimWidget::~NvimWidget() {
     m_requests.clear();
 }
 
-void NvimWidget::open_file() { _spawn_nvim(); }
+void NvimWidget::open_file() {}
+
+void NvimWidget::render() {
+    if (m_nvim_proc.pid == 0) {
+        _spawn_nvim();
+    }
+
+    _check_font_size_changed();
+
+    ImGui::SetNextWindowSize(m_window_size, ImGuiCond_FirstUseEver);
+
+    bool window_open = true;
+    bool window_created = ImGui::Begin(m_window_title.c_str(), &window_open,
+                                       ImGuiWindowFlags_NoCollapse);
+    if (window_created) {
+        m_window_size = ImGui::GetWindowSize();
+        _handle_nvim_resize();
+        ImGui::End();
+    }
+}
+
+void NvimWidget::resize(uint32_t cols, uint32_t rows) {
+    // Get actual content area size
+    ImVec2 content_size = ImGui::GetContentRegionAvail();
+    float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
+    float line_height = ImGui::GetTextLineHeight();
+
+    // Calculate new dimensions based on actual font metrics
+    uint32_t new_cols =
+        std::max(static_cast<uint32_t>(1),
+                 static_cast<uint32_t>(content_size.x / char_width));
+    uint32_t new_rows =
+        std::max(static_cast<uint32_t>(1),
+                 static_cast<uint32_t>(content_size.y / line_height));
+
+    // Only resize if dimensions actually changed
+    if (new_cols == m_state.col && new_rows == m_state.row) {
+        return;
+    }
+
+    // Update nvim state
+    m_state.row = rows;
+    m_state.col = cols;
+
+    // Ensure cursor stays within bounds
+    m_state.cursor_x = std::min(m_state.cursor_x, cols - 1);
+    m_state.cursor_y = std::min(m_state.cursor_y, rows - 1);
+
+    LOG_DEBUG("Nvim widget resized to {}x{}", cols, rows);
+}
 
 std::shared_ptr<NvimRequest> NvimWidget::start_nvim_request(
     const std::string& method, uint8_t param_count,
@@ -166,8 +218,61 @@ void NvimWidget::_spawn_nvim() {
                 "Got nvim meta data, channle: {}, api compatible: {}, api "
                 "level: {}",
                 m_nvim_channel, m_nvim_api_compatible, m_nvim_api_level);
+            _initialize();
         },
         nullptr);
+}
+
+/*
+ * 'nvim_get_api_info' has responded, ready to attach.
+ * https://neovim.io/doc/user/api-ui-events.html#ui-startup
+ */
+void NvimWidget::_initialize() {
+    auto req = start_nvim_request(
+        "nvim_ui_attach", 3,
+        [this](msgpack::object& result) {
+            if (result.type != msgpack::type::NIL) {
+                return;
+            }
+            _set_nvim_attached(true);
+        },
+        nullptr);
+    req->arg_uint32(m_state.col);
+    req->arg_uint32(m_state.row);
+    req->arg_map(1);
+    {
+        std::string rgb_key{"rgb"};
+        req->arg_str(rgb_key.size());
+        req->arg_str_body(rgb_key.c_str(), rgb_key.size());
+        req->arg_true();
+    }
+}
+
+void NvimWidget::_set_nvim_attached(bool attached) {
+    m_nvim_attached = attached;
+}
+
+void NvimWidget::_check_font_size_changed() {
+    float current_font_size = ImGui::GetFontBaked()->Size;
+    if (current_font_size != m_last_font_size) {
+        m_last_font_size = current_font_size;
+        resize(m_state.col, m_state.row);
+    }
+}
+
+void NvimWidget::_handle_nvim_resize() {
+    ImVec2 content_size = ImGui::GetContentRegionAvail();
+    float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
+    float line_height = ImGui::GetTextLineHeight();
+
+    int new_cols = std::max(1, static_cast<int>(content_size.x / char_width));
+    int new_rows = std::max(1, static_cast<int>(content_size.y / line_height));
+
+    if (new_cols != m_state.col || new_rows != m_state.row) {
+        LOG_DEBUG("Resizing nvim widget.");
+
+        resize(new_cols, new_rows);
+    }
 }
 
 /**

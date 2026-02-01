@@ -118,10 +118,6 @@ void Terminal::resize(int cols, int rows) {
     // Create new buffers
     std::vector<bool> new_dirty(rows, true);
 
-    // Copy existing content
-    int min_rows = std::min(rows, m_state.row);
-    int min_cols = std::min(cols, m_state.col);
-
     // Update terminal state
     m_state.row = rows;
     m_state.col = cols;

@@ -23,12 +23,12 @@ class MyLayer : public ImApp::Layer {
     void on_attach() override {
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigWindowsMoveFromTitleBarOnly = true;
-        m_nvim->open_file();
     }
 
     void on_imgui_render() override {
         ImGui::ShowDemoWindow();
         m_terminal->render();
+        m_nvim->render();
     }
 
   private:

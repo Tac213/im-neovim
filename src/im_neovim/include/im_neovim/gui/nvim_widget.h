@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <functional>
+#include <imgui.h>
 #include <memory>
 #include <msgpack.hpp>
 #include <sstream>
@@ -15,7 +16,11 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
   public:
     NvimWidget();
     ~NvimWidget();
+
     void open_file();
+    void render();
+    void resize(uint32_t cols, uint32_t rows);
+
     std::shared_ptr<NvimRequest> start_nvim_request(
         const std::string& method, uint8_t param_count,
         std::function<void(msgpack::object&)>&& on_result,
@@ -24,6 +29,13 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
   private:
     friend class NvimRequest;
     void _spawn_nvim();
+    void _initialize();
+    void _set_nvim_attached(bool attached);
+
+    /* GUI-related methods */
+    void _check_font_size_changed();
+    void _handle_nvim_resize();
+
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
     static void _on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
@@ -38,6 +50,7 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
                             const uv_buf_t* buf);
     static void _uv_write_cb(uv_write_t* req, int status);
 
+    /* RPC-related methods */
     void _send_nvim_error(const msgpack::object& req, const std::string& msg);
     void _send_nvim_error(uint64_t msgid, const std::string& msg);
     void _handle_nvim_rpc(const std::vector<char>& msgpack_data);
@@ -45,6 +58,17 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
     void _dispatch_request(msgpack::object& req);
     void _dispatch_response(msgpack::object& resp);
     void _dispatch_notification(msgpack::object& nt);
+
+    struct NvimState {
+        uint32_t cursor_x{0};
+        uint32_t cursor_y{0};
+        uint32_t row{0};
+        uint32_t col{0};
+    } m_state;
+    std::string m_window_title;
+    float m_last_font_size{0.0f};
+
+    ImVec2 m_window_size{800.0f, 400.0f};
 
     uv_process_t m_nvim_proc;
     uv_pipe_t m_in_pipe;
@@ -55,6 +79,7 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
     uint64_t m_nvim_api_compatible{0};
     uint64_t m_nvim_api_level{0};
     std::vector<std::string> m_nvim_ui_options;
+    bool m_nvim_attached{false};
 
     /* msgpack-related */
     std::atomic<uint32_t> m_nvim_msgid{1};
