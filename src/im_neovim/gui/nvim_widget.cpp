@@ -1,0 +1,804 @@
+#include "im_neovim/gui/nvim_widget.h"
+#include "im_neovim/globals.h"
+#include "im_neovim/logging.h"
+#include <im_app/file_system.h>
+#include <sstream>
+
+namespace ImNeovim {
+NvimWidget::NvimWidget() {
+    m_nvim_proc.data = nullptr;
+    m_nvim_proc.pid = 0;
+    m_in_pipe.data = nullptr;
+    m_out_pipe.data = nullptr;
+}
+
+NvimWidget::~NvimWidget() {
+    if (m_nvim_proc.pid > 0) {
+        uv_process_kill(&m_nvim_proc, SIGKILL);
+        m_nvim_proc.data = nullptr;
+        m_nvim_proc.pid = 0;
+    }
+    if (m_in_pipe.data != nullptr) {
+        uv_close(reinterpret_cast<uv_handle_t*>(&m_in_pipe), nullptr);
+        m_in_pipe.data = nullptr;
+    }
+    if (m_out_pipe.data != nullptr) {
+        uv_close(reinterpret_cast<uv_handle_t*>(&m_out_pipe), nullptr);
+        m_out_pipe.data = nullptr;
+    }
+    m_requests.clear();
+}
+
+void NvimWidget::open_file() { _spawn_nvim(); }
+
+std::shared_ptr<NvimRequest> NvimWidget::start_nvim_request(
+    const std::string& method, uint8_t param_count,
+    std::function<void(msgpack::object&)>&& on_result,
+    std::function<void(int32_t, const std::string&)>&& on_error) {
+    // [type(0), msgid, method, args]
+    uint32_t cur_msgid = m_nvim_msgid.fetch_add(1);
+    auto request = std::make_shared<NvimRequest>(
+        cur_msgid, method, param_count, shared_from_this(),
+        std::move(on_result), std::move(on_error));
+    m_requests.emplace(cur_msgid, request);
+    return request;
+}
+
+void NvimWidget::_spawn_nvim() {
+    auto exe_path = ImApp::FileSystem::executable_path();
+    auto cwd = exe_path.parent_path();
+    auto nvim_exe_path = cwd / "nvim" / "bin" /
+#if defined(IM_APP_WIN32)
+                         "nvim.exe";
+#else
+                         "nvim";
+#endif
+    m_nvim_exe = nvim_exe_path.string();
+    m_nvim_cwd = cwd.string();
+
+    char* args[3];
+    args[0] = const_cast<char*>(m_nvim_exe.c_str());
+    args[1] = const_cast<char*>("--embed");
+    args[2] = nullptr;
+
+    uv_pipe_init(globals::g_uv_loop, &m_in_pipe, 0);
+    m_in_pipe.data = this;
+    uv_pipe_init(globals::g_uv_loop, &m_out_pipe, 0);
+    m_out_pipe.data = this;
+
+    uv_stdio_container_t nvim_stdio[3];
+    /* stdin for nvim */
+    nvim_stdio[0].flags =
+        static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_READABLE_PIPE);
+    nvim_stdio[0].data.stream = reinterpret_cast<uv_stream_t*>(&m_in_pipe);
+    /* stdout for nvim */
+    nvim_stdio[1].flags =
+        static_cast<uv_stdio_flags>(UV_CREATE_PIPE | UV_WRITABLE_PIPE);
+    nvim_stdio[1].data.stream = reinterpret_cast<uv_stream_t*>(&m_out_pipe);
+    /* stderr for nvim */
+    nvim_stdio[2].flags = UV_IGNORE;
+    nvim_stdio[2].data.stream = nullptr;
+
+    uv_process_options_t options = {nullptr};
+    options.file = m_nvim_exe.c_str();
+    options.args = args;
+    options.cwd = m_nvim_cwd.c_str();
+    options.flags = 0;
+    options.env = nullptr;
+    options.stdio_count = 3;
+    options.stdio = nvim_stdio;
+    options.exit_cb = _on_nvim_exit;
+
+    int r;
+    if ((r = uv_spawn(globals::g_uv_loop, &m_nvim_proc, &options))) {
+        LOG_ERROR("Failed to spawn nvim: {}", uv_strerror(r));
+        m_nvim_proc.data = nullptr;
+        m_nvim_proc.pid = 0;
+        uv_close(reinterpret_cast<uv_handle_t*>(&m_in_pipe), nullptr);
+        m_in_pipe.data = nullptr;
+        uv_close(reinterpret_cast<uv_handle_t*>(&m_out_pipe), nullptr);
+        m_out_pipe.data = nullptr;
+        return;
+    }
+    LOG_DEBUG("Launched nvim --embed with pid {}", m_nvim_proc.pid);
+    m_nvim_proc.data = this;
+    uv_read_start(reinterpret_cast<uv_stream_t*>(&m_out_pipe), _uv_alloc_cb,
+                  _uv_read_cb);
+    start_nvim_request(
+        "nvim_get_api_info", 0,
+        [this](msgpack::object& result) {
+            if (result.type != msgpack::type::ARRAY ||
+                result.via.array.size != 2 ||
+                result.via.array.ptr[0].type !=
+                    msgpack::type::POSITIVE_INTEGER ||
+                result.via.array.ptr[1].type != msgpack::type::MAP) {
+                return;
+            }
+            m_nvim_channel = result.via.array.ptr[0].as<uint64_t>();
+            msgpack::object& meta_data = result.via.array.ptr[1];
+            for (size_t i = 0; i < meta_data.via.map.size; i++) {
+                auto& kv_pair = meta_data.via.map.ptr[i];
+                auto& key = kv_pair.key;
+                if (key.type != msgpack::type::STR) {
+                    continue;
+                }
+                auto k = key.as<std::string>();
+                auto& value = kv_pair.val;
+                if (strcmp(k.c_str(), "version") == 0) {
+                    if (value.type != msgpack::type::MAP) {
+                        continue;
+                    }
+                    for (size_t j = 0; j < value.via.map.size; j++) {
+                        auto& version_kv_pair = value.via.map.ptr[j];
+                        auto& version_key = version_kv_pair.key;
+                        if (version_key.type != msgpack::type::STR) {
+                            continue;
+                        }
+                        auto version_k = version_key.as<std::string>();
+                        auto& version_value = version_kv_pair.val;
+                        if (strcmp(version_k.c_str(), "api_compatible") == 0 &&
+                            version_value.type ==
+                                msgpack::type::POSITIVE_INTEGER) {
+                            m_nvim_api_compatible =
+                                version_value.as<uint64_t>();
+                        } else if (strcmp(version_k.c_str(), "api_level") ==
+                                       0 &&
+                                   version_value.type ==
+                                       msgpack::type::POSITIVE_INTEGER) {
+                            m_nvim_api_level = version_value.as<uint64_t>();
+                        }
+                    }
+                } else if (strcmp(k.c_str(), "ui_options") == 0) {
+                    if (value.type != msgpack::type::ARRAY) {
+                        continue;
+                    }
+                    for (size_t j = 0; j < value.via.array.size; j++) {
+                        auto& ui_option = value.via.array.ptr[j];
+                        if (ui_option.type != msgpack::type::STR) {
+                            continue;
+                        }
+                        m_nvim_ui_options.emplace_back(
+                            ui_option.as<std::string>());
+                    }
+                }
+            }
+            LOG_DEBUG(
+                "Got nvim meta data, channle: {}, api compatible: {}, api "
+                "level: {}",
+                m_nvim_channel, m_nvim_api_compatible, m_nvim_api_level);
+        },
+        nullptr);
+}
+
+/**
+ * Send error response for the given request message
+ */
+void NvimWidget::_send_nvim_error(const msgpack::object& req,
+                                  const std::string& msg) {
+    if (req.via.array.ptr[0].as<uint64_t>() != 0) {
+        LOG_ERROR("Errors can only be sent as replies to Requests(type=0)");
+    }
+    uint64_t msgid = req.via.array.ptr[1].as<uint64_t>();
+    _send_nvim_error(req.via.array.ptr[1].as<uint64_t>(), msg);
+}
+
+void NvimWidget::_send_nvim_error(uint64_t msgid, const std::string& msg) {
+    // [type(1), msgid, error, result(nil)]
+    std::stringstream buffer;
+    msgpack::packer<std::stringstream> packer(buffer);
+    packer.pack_array(4);
+    packer.pack_int(1); // 1 = Response
+    packer.pack_uint32(msgid);
+    packer.pack_bin(msg.size());
+    packer.pack_bin_body(msg.data(), msg.size());
+    packer.pack_nil();
+
+    uv_write_t* write_req = new uv_write_t();
+    write_req->data = this;
+
+    std::string buffer_string = buffer.str();
+    uv_buf_t uv_buf = uv_buf_init(buffer_string.data(), buffer_string.size());
+
+    int r = uv_write(write_req, reinterpret_cast<uv_stream_t*>(&m_in_pipe),
+                     &uv_buf, 1, _uv_write_cb);
+    if (r) {
+        LOG_ERROR("uv_write failed when sending error msgid {}: {}", msgid,
+                  uv_strerror(r));
+        delete write_req;
+    }
+}
+
+void NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
+    if (msgpack_data.empty())
+        return;
+
+    msgpack::unpacked result;
+    std::size_t len = msgpack_data.size();
+    std::size_t off = 0;
+    while (off != len) {
+        msgpack::unpacked result;
+        msgpack::unpack(result, msgpack_data.data(), len, off);
+        LOG_DEBUG("Parsed a complete nvim msgpack package (offset: {})", off);
+        msgpack::object obj(result.get());
+        _dispatch(obj);
+    }
+}
+
+void NvimWidget::_dispatch(msgpack::object& req) {
+    if (req.type != msgpack::type::ARRAY) {
+        LOG_ERROR("Invalid nvim RPC: not an array.");
+        return;
+    }
+    if (req.via.array.size < 3 || req.via.array.size > 4) {
+        LOG_ERROR("Invalid nvim RPC: message length MUST be 3 or 4.");
+        return;
+    }
+    if (req.via.array.ptr[0].type != msgpack::type::POSITIVE_INTEGER) {
+        LOG_ERROR("Invalid nvim RPC: message type MUST be a positive "
+                  "integer.");
+        return;
+    }
+    uint64_t type = req.via.array.ptr[0].as<uint64_t>();
+    switch (type) {
+    case 0:
+        if (req.via.array.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+            LOG_ERROR("Invalid nvim request: message id MUST be a positive "
+                      "integer.");
+            _send_nvim_error(req, "Msg Id must be a positive integer.");
+            return;
+        }
+        if (req.via.array.ptr[2].type != msgpack::type::STR) {
+            LOG_ERROR("Invalid nvim request: method MUST be a string.");
+            _send_nvim_error(req, "Method must be a string.");
+            return;
+        }
+        if (req.via.array.ptr[3].type != msgpack::type::ARRAY) {
+            LOG_ERROR("Invalid nvim request: arguments MUST be an array.");
+            _send_nvim_error(req, "Arguments must be a array.");
+            return;
+        }
+        _dispatch_request(req);
+        break;
+    case 1:
+        if (req.via.array.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+            LOG_ERROR("Invalid nvim response: message id MUST be a positive "
+                      "integer.");
+            return;
+        }
+        _dispatch_response(req);
+        break;
+    case 2:
+        _dispatch_notification(req);
+        break;
+    default:
+        LOG_ERROR("Unsupported nvim message type: {}", type);
+    }
+}
+
+void NvimWidget::_dispatch_request(msgpack::object& req) {
+    /*
+     * nvim msgpack requests are
+     * [type(0), msgid(uint), method(str), args(object_array)]
+     * See: `serialize_request` in 'nvim/msgpack_rpc/channel.c'
+     */
+}
+
+void NvimWidget::_dispatch_response(msgpack::object& resp) {
+    /*
+     * If there's no error, nvim msgpack responses are
+     * [type(1), msgid(uint), nil, return value(object)]
+     * otherwise, nvim msgpack responses are
+     * [type(1), msgid(uint), [error_type(int), error_msg(str), nil]
+     * See: `serialize_response` in 'nvim/msgpack_rpc/channel.c'
+     */
+
+    uint64_t msgid = resp.via.array.ptr[1].as<uint64_t>();
+    auto req_it = m_requests.find(msgid);
+    if (req_it == m_requests.end()) {
+        LOG_WARN("Received response for unknown message id: {}", msgid);
+        return;
+    }
+    auto& request = req_it->second;
+    if (resp.via.array.ptr[2].type != msgpack::type::NIL) {
+        auto& err = resp.via.array.ptr[2];
+        if (err.via.array.size >= 2 &&
+            (err.via.array.ptr[0].type == msgpack::type::POSITIVE_INTEGER |
+             err.via.array.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) &&
+            err.via.array.ptr[1].type == msgpack::type::STR &&
+            request->m_on_error) {
+            int32_t error_type = err.via.array.ptr[0].as<int32_t>();
+            std::string error_msg = err.via.array.ptr[1].as<std::string>();
+            request->m_on_error(error_type, error_msg);
+        }
+    } else {
+        if (request->m_on_result) {
+            request->m_on_result(resp.via.array.ptr[3]);
+        }
+    }
+    m_requests.erase(req_it);
+}
+
+void NvimWidget::_dispatch_notification(msgpack::object& nt) {
+    /*
+     * nvim msgpack notifications are
+     * [type(0), method(str), args(object_array)]
+     * See: `serialize_request` in 'nvim/msgpack_rpc/channel.c'
+     */
+}
+
+void NvimWidget::_on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
+                               int term_signal) {
+    auto* self = static_cast<NvimWidget*>(nvim_proc->data);
+    LOG_DEBUG("nvim exited with status {}, signal {}", exit_status,
+              term_signal);
+    uv_read_stop(reinterpret_cast<uv_stream_t*>(&self->m_out_pipe));
+    uv_close(reinterpret_cast<uv_handle_t*>(&self->m_in_pipe), nullptr);
+    self->m_in_pipe.data = nullptr;
+    uv_close(reinterpret_cast<uv_handle_t*>(&self->m_out_pipe), nullptr);
+    self->m_out_pipe.data = nullptr;
+    uv_close(reinterpret_cast<uv_handle_t*>(nvim_proc), nullptr);
+    self->m_nvim_msgid.store(1);
+}
+
+void NvimWidget::_uv_alloc_cb(uv_handle_t* handle, size_t suggested,
+                              uv_buf_t* buf) {
+    *buf = uv_buf_init(static_cast<char*>(malloc(suggested)), suggested);
+}
+
+void NvimWidget::_uv_read_cb(uv_stream_t* stream, ssize_t nread,
+                             const uv_buf_t* buf) {
+    auto* self = static_cast<NvimWidget*>(stream->data);
+    if (nread < 0) {
+        if (nread != UV_EOF) {
+            LOG_ERROR("Read nvim data failed: {}",
+                      uv_strerror(static_cast<int>(nread)));
+        } else {
+            LOG_DEBUG("Nvim stdout pipe closed (EOF)");
+        }
+        uv_read_stop(stream);
+        if (buf->base) {
+            free(buf->base);
+        }
+        return;
+    }
+    if (nread == 0) {
+        // cnt == 0 means libuv asked for a buffer and decided it wasn't needed:
+        // http://docs.libuv.org/en/latest/stream.html#c.uv_read_start.
+        if (buf->base) {
+            free(buf->base);
+        }
+        return;
+    }
+    if (buf->base) {
+        self->m_nvim_resp_buf.insert(self->m_nvim_resp_buf.end(), buf->base,
+                                     buf->base + nread);
+        free(buf->base);
+        self->_handle_nvim_rpc(self->m_nvim_resp_buf);
+        self->m_nvim_resp_buf.clear();
+    }
+}
+
+void NvimWidget::_uv_write_cb(uv_write_t* req, int status) {
+    auto* request = static_cast<NvimRequest*>(req->data);
+    if (status) {
+        LOG_ERROR("Nvim RPC write failed: {}", uv_strerror(status));
+        if (auto self = request->m_nvim.lock()) {
+            if (self->m_requests.find(request->msgid) !=
+                self->m_requests.end()) {
+                self->m_requests.erase(request->msgid);
+            }
+        }
+    }
+    delete req;
+}
+
+NvimRequest::NvimRequest(
+    uint32_t msgid, const std::string& method, uint8_t param_count,
+    std::weak_ptr<NvimWidget> nvim,
+    std::function<void(msgpack::object&)>&& on_result,
+    std::function<void(int32_t, const std::string&)>&& on_error)
+    : msgid(msgid), m_method(method), m_arg_count(0),
+      m_param_count(param_count), m_nvim(nvim),
+      m_on_result(std::move(on_result)), m_on_error(std::move(on_error)) {
+    /*
+     * nvim msgpack requests are
+     * [type(0), msgid(uint), method(str), args(object_array)]
+     * See: `serialize_request` in 'nvim/msgpack_rpc/channel.c'
+     */
+    m_buffer.str(std::string());
+    m_packer = std::make_unique<msgpack::packer<std::stringstream>>(m_buffer);
+    m_packer->pack_array(4);
+    m_packer->pack_int(0); /* Request(0) */
+    m_packer->pack_uint32(msgid);
+    m_packer->pack_bin(method.size());
+    m_packer->pack_bin_body(method.data(), method.size());
+    m_packer->pack_array(param_count);
+    if (param_count == m_arg_count) {
+        _send();
+    }
+}
+
+#define ERROR_TYPE_ARG_COUNT_MISMATCH (-32602)
+#define ERROR_TYPE_UNCLOSED_CONTAINER (-32601)
+#define ERROR_TYPE_NVIM_DESTROYED (-32600)
+#define ERROR_TYPE_LIBUV_WRITE_FAILED (-32599)
+
+void NvimRequest::_send() {
+    if (!m_packer) {
+        LOG_ERROR("Nvim RPC '{}'[msgid: {}] packer is null, send abort.",
+                  m_method, msgid);
+        return;
+    }
+    if (m_arg_count != m_param_count) {
+        LOG_ERROR("Trying to send nvim RPC '{}'[msgid: {}], but the number of "
+                  "parameters does not match the declaration!!",
+                  m_method, msgid);
+        if (m_on_error) {
+            m_on_error(ERROR_TYPE_ARG_COUNT_MISMATCH,
+                       "Invalid arguments: count mismatch with parameters.");
+        }
+        m_packer.reset();
+        return;
+    }
+    if (!m_container_stack.empty()) {
+        LOG_ERROR("Trying to send nvim RPC '{}'[msgid: {}], but the "
+                  "container stack is not empty, something went wrong!!",
+                  m_method, msgid);
+        if (m_on_error) {
+            m_on_error(ERROR_TYPE_UNCLOSED_CONTAINER,
+                       "Invalid arguments: found unclosed container.");
+        }
+        m_packer.reset();
+        return;
+    }
+    if (auto nvim = m_nvim.lock()) {
+        std::string send_buf = m_buffer.str();
+        LOG_DEBUG("Send nvim RPC '{}'[msgid:{}] ({} bytes)", m_method, msgid,
+                  send_buf.size());
+
+        // Will be deleted in NvimWidget::_nv_write_cb.
+        uv_write_t* write_req = new uv_write_t();
+        write_req->data = this;
+
+        uv_buf_t uv_buf =
+            uv_buf_init(const_cast<char*>(send_buf.data()), send_buf.size());
+
+        int r = uv_write(write_req,
+                         reinterpret_cast<uv_stream_t*>(&nvim->m_in_pipe),
+                         &uv_buf, 1, NvimWidget::_uv_write_cb);
+        if (r) {
+            LOG_ERROR("uv_write failed for '{}'[msgid: {}]: {}", m_method,
+                      msgid, uv_strerror(r));
+            delete write_req;
+            if (m_on_error) {
+                m_on_error(ERROR_TYPE_LIBUV_WRITE_FAILED,
+                           "Failed to write into the stdin of nvim.");
+            }
+        }
+    } else {
+        LOG_ERROR("Faield to send Nvim RPC '{}'[msgid: {}], NvimWidget has "
+                  "been destroyed.",
+                  m_method, msgid);
+        if (m_on_error) {
+            m_on_error(ERROR_TYPE_NVIM_DESTROYED,
+                       "NvimWidget has been destroyed.");
+        }
+    }
+    /* The packer is no longer needed. */
+    m_packer.reset();
+}
+
+#define TRY_TO_SEND()                                                          \
+    do {                                                                       \
+        if (!m_container_stack.empty()) {                                      \
+            m_container_stack.top() -= 1;                                      \
+            if (m_container_stack.top() == 0) {                                \
+                m_container_stack.pop();                                       \
+            }                                                                  \
+        }                                                                      \
+        if (m_container_stack.empty()) {                                       \
+            m_arg_count++;                                                     \
+        }                                                                      \
+        if (m_arg_count == m_param_count && m_container_stack.empty()) {       \
+            _send();                                                           \
+        }                                                                      \
+    } while (0)
+
+void NvimRequest::arg_uint8(uint8_t d) {
+    if (!m_packer) {
+        return;
+    }
+    m_packer->pack_uint8(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_uint16(uint16_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_uint16(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_uint32(uint32_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_uint32(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_uint64(uint64_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_uint64(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_int8(int8_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_int8(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_int16(int16_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_int16(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_int32(int32_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_int32(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_int64(int64_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_int64(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_uint8(uint8_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_uint8(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_uint16(uint16_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_uint16(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_uint32(uint32_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_uint32(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_uint64(uint64_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_uint64(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_int8(int8_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_int8(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_int16(int16_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_int16(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_int32(int32_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_int32(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_fix_int64(int64_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_fix_int64(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_char(char d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_char(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_signed_char(signed char d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_signed_char(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_short(int16_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_short(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_int(int d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_int(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_long(int32_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_long(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_long_long(int64_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_long_long(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_unsigned_char(uint8_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_unsigned_char(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_unsigned_short(uint16_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_unsigned_short(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_unsigned_int(uint32_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_unsigned_int(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_unsigned_long(uint32_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_unsigned_long(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_unsigned_long_long(uint64_t d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_unsigned_long_long(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_float(float d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_float(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_double(double d) {
+    if (!m_packer)
+        return;
+    m_packer->pack_double(d);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_nil() {
+    if (!m_packer)
+        return;
+    m_packer->pack_nil();
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_true() {
+    if (!m_packer)
+        return;
+    m_packer->pack_true();
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_false() {
+    if (!m_packer)
+        return;
+    m_packer->pack_false();
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_array(size_t n) {
+    if (!m_packer) {
+        return;
+    }
+    m_packer->pack_array(n);
+    if (n > 0) {
+        m_container_stack.push(n);
+    } else {
+        TRY_TO_SEND();
+    }
+}
+
+void NvimRequest::arg_map(size_t n) {
+    if (!m_packer) {
+        return;
+    }
+    m_packer->pack_map(n);
+    if (n > 0) {
+        m_container_stack.push(n * 2);
+    } else {
+        TRY_TO_SEND();
+    }
+}
+
+void NvimRequest::arg_bin(size_t l) {
+    if (!m_packer) {
+        return;
+    }
+    m_packer->pack_bin(l);
+    m_container_stack.push(1);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_bin_body(const char* b, size_t l) {
+    if (!m_packer) {
+        return;
+    }
+    m_packer->pack_bin_body(b, l);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_str(size_t l) {
+    if (!m_packer)
+        return;
+    m_packer->pack_str(l);
+    m_container_stack.push(1);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_str_body(const char* b, size_t l) {
+    if (!m_packer)
+        return;
+    m_packer->pack_str_body(b, l);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_ext(size_t l, int8_t type) {
+    if (!m_packer)
+        return;
+    m_packer->pack_ext(l, type);
+    m_container_stack.push(1);
+    TRY_TO_SEND();
+}
+
+void NvimRequest::arg_ext_body(const char* b, size_t l) {
+    if (!m_packer)
+        return;
+    m_packer->pack_ext_body(b, l);
+    TRY_TO_SEND();
+}
+
+#undef TRY_TO_SEND
+} // namespace ImNeovim

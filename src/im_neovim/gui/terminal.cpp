@@ -41,6 +41,7 @@ Terminal::Terminal() : m_window_title("Terminal"), m_dark_mode(true) {
     m_vterm_screen_callbacks.movecursor = _vterm_movecursor;
     m_vterm_screen_callbacks.settermprop = _vterm_settermprop;
     m_vterm_screen_callbacks.bell = _vterm_bell;
+    m_vterm_screen_callbacks.resize = nullptr;
     m_vterm_screen_callbacks.sb_pushline = _vterm_sb_pushline;
     m_vterm_screen_callbacks.sb_popline = _vterm_sb_popline;
     m_vterm_screen_callbacks.sb_clear = _vterm_sb_clear;

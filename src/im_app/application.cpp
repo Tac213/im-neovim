@@ -68,10 +68,14 @@ void Application::_initialize() {
 }
 
 void Application::_finalize() {
-    for (auto& layer : m_layer_stack) {
+    for (auto riter = m_layer_stack.rbegin(); riter != m_layer_stack.rend();
+         ++riter) {
+        auto* layer = riter->get();
         layer->on_detach();
     }
-    m_layer_stack.clear();
+    while (!m_layer_stack.empty()) {
+        m_layer_stack.pop_back();
+    }
     m_imgui_renderer.reset();
     m_graphics_context->finalize();
     m_graphics_context.reset();

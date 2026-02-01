@@ -1,4 +1,7 @@
+// clang-format off
 #include "im_neovim/gui/terminal.h"
+#include "im_neovim/gui/nvim_widget.h"
+// clang-format on
 #include "im_neovim/logging.h"
 #include "layers/layer_libuv.h"
 #include <im_app/application.h>
@@ -12,18 +15,25 @@
 namespace ImNeovim {
 class MyLayer : public ImApp::Layer {
   public:
+    MyLayer() {
+        m_terminal = std::make_shared<Terminal>();
+        m_nvim = std::make_shared<NvimWidget>();
+    }
+
     void on_attach() override {
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigWindowsMoveFromTitleBarOnly = true;
+        m_nvim->open_file();
     }
 
     void on_imgui_render() override {
         ImGui::ShowDemoWindow();
-        m_terminal.render();
+        m_terminal->render();
     }
 
   private:
-    Terminal m_terminal;
+    std::shared_ptr<Terminal> m_terminal{nullptr};
+    std::shared_ptr<NvimWidget> m_nvim{nullptr};
 };
 
 static void initialize_logger() {

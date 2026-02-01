@@ -65,7 +65,7 @@ if(NOT TARGET nvim)
     set(NVIM_URL "https://github.com/neovim/neovim/archive/refs/tags/nightly.zip")
     set(NVIM_SOURCE_DIR "${CMAKE_CURRENT_BINARY_DIR}/neovim-src")
     set(NVIM_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/neovim-build")
-    set(NVIM_INSTALL_DIR "${CMAKE_CURRENT_BINARY_DIR}/neovim-install")
+    set(NVIM_INSTALL_DIR "${CMAKE_CURRENT_BINARY_DIR}/../nvim")
 
     message(STATUS ${PROJECT_BINARY_DIR})
     message(STATUS ${CMAKE_CURRENT_BINARY_DIR})
@@ -145,4 +145,8 @@ endif()
 
 if(NOT TARGET libuv)
     add_subdirectory(libuv)
+endif()
+
+if(NOT TARGET msgpack-c)
+    add_subdirectory(msgpack-c)
 endif()

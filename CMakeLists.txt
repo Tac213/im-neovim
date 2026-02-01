@@ -164,9 +164,13 @@ set(im_neovim_private_header_dir "${im_neovim_dir}/include")
 
 set(im_neovim_private_files
     "${im_neovim_private_header_dir}/im_neovim/logging.h"
+    "${im_neovim_private_header_dir}/im_neovim/globals.h"
     "${im_neovim_private_header_dir}/im_neovim/gui/terminal.h"
+    "${im_neovim_private_header_dir}/im_neovim/gui/nvim_widget.h"
     "${im_neovim_dir}/im_neovim_app.cpp"
+    "${im_neovim_dir}/globals.cpp"
     "${im_neovim_dir}/gui/terminal.cpp"
+    "${im_neovim_dir}/gui/nvim_widget.cpp"
     "${im_neovim_dir}/layers/layer_libuv.h"
     "${im_neovim_dir}/layers/layer_libuv.cpp"
 )
@@ -182,6 +186,7 @@ target_link_libraries(
     ImApp::ImApp
     libvterm
     libuv::libuv
+    msgpack-cxx
 )
 
 target_include_directories(
