@@ -165,10 +165,12 @@ set(im_neovim_private_header_dir "${im_neovim_dir}/include")
 set(im_neovim_private_files
     "${im_neovim_private_header_dir}/im_neovim/logging.h"
     "${im_neovim_private_header_dir}/im_neovim/globals.h"
+    "${im_neovim_private_header_dir}/im_neovim/gui/text_widget.h"
     "${im_neovim_private_header_dir}/im_neovim/gui/terminal.h"
     "${im_neovim_private_header_dir}/im_neovim/gui/nvim_widget.h"
     "${im_neovim_dir}/im_neovim_app.cpp"
     "${im_neovim_dir}/globals.cpp"
+    "${im_neovim_dir}/gui/text_widget.cpp"
     "${im_neovim_dir}/gui/terminal.cpp"
     "${im_neovim_dir}/gui/nvim_widget.cpp"
     "${im_neovim_dir}/layers/layer_libuv.h"

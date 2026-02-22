@@ -1,13 +1,62 @@
 #include "im_neovim/gui/nvim_widget.h"
 #include "im_neovim/globals.h"
 #include "im_neovim/logging.h"
+#include <algorithm>
+#include <cmath>
 #include <im_app/file_system.h>
 
 namespace ImNeovim {
-NvimWidget::NvimWidget() : m_window_title("nvim") {
+
+// HighlightAttr implementation
+NvimWidget::HighlightAttr::HighlightAttr()
+    : fg(1.0f, 1.0f, 1.0f, 1.0f), bg(0.0f, 0.0f, 0.0f, 1.0f),
+      sp(1.0f, 0.0f, 0.0f, 1.0f), bold(false), italic(false), underline(false),
+      undercurl(false), reverse(false) {}
+
+// Grid implementation
+NvimWidget::Grid::Grid() : id(1), width(80), height(24) {
+    resize(width, height);
+}
+
+void NvimWidget::Grid::clear() {
+    for (auto& row : cells) {
+        for (auto& cell : row) {
+            cell.clear();
+        }
+    }
+}
+
+void NvimWidget::Grid::resize(uint32_t w, uint32_t h) {
+    width = w;
+    height = h;
+    cells.resize(h);
+    for (auto& row : cells) {
+        row.resize(w);
+    }
+}
+
+NvimWidget::NvimWidget() {
+    m_window_title = "nvim (no file)";
+
     // Initialize with safe default size
     m_state.row = 24;
     m_state.col = 80;
+
+    // Initialize default colors
+    m_default_fg = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    m_default_bg = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    m_default_sp = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+    // Initialize current highlight
+    m_current_hl.fg = m_default_fg;
+    m_current_hl.bg = m_default_bg;
+    m_current_hl.sp = m_default_sp;
+
+    // Create default grid
+    Grid default_grid;
+    default_grid.id = 1;
+    default_grid.resize(m_state.col, m_state.row);
+    m_grids[1] = std::move(default_grid);
 
     m_nvim_proc.data = nullptr;
     m_nvim_proc.pid = 0;
@@ -40,16 +89,84 @@ void NvimWidget::render() {
     }
 
     _check_font_size_changed();
+    bool window_created = TextWidget::setup_window();
 
-    ImGui::SetNextWindowSize(m_window_size, ImGuiCond_FirstUseEver);
-
-    bool window_open = true;
-    bool window_created = ImGui::Begin(m_window_title.c_str(), &window_open,
-                                       ImGuiWindowFlags_NoCollapse);
-    if (window_created) {
-        m_window_size = ImGui::GetWindowSize();
+    // Only render content if window is open and not collapsed
+    if (window_created && (m_is_embedded || !m_embedded_window_collapsed)) {
         _handle_nvim_resize();
+
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
+        float line_height = ImGui::GetTextLineHeight();
+
+        _render_grid(draw_list, pos, char_width, line_height);
+    }
+
+    // Only call End() if Begin() was actually called and succeeded
+    if (window_created && !m_is_embedded) {
         ImGui::End();
+    }
+}
+
+void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
+                              float char_width, float line_height) {
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    Grid& grid = it->second;
+
+    // Draw all cells
+    for (uint32_t y = 0; y < grid.height; y++) {
+        for (uint32_t x = 0; x < grid.width; x++) {
+            ImVec2 char_pos(pos.x + x * char_width, pos.y + y * line_height);
+            TextWidget::render_cell(draw_list, grid.cells[y][x], char_pos,
+                                    char_width, line_height);
+        }
+    }
+
+    // Draw cursor
+    if (ImGui::IsWindowFocused() && m_nvim_attached) {
+        ImVec2 cursor_pos(pos.x + m_state.cursor_x * char_width,
+                          pos.y + m_state.cursor_y * line_height);
+        float alpha = (sin(ImGui::GetTime() * 3.14159f) * 0.3f) + 0.5f;
+
+        ScreenCell cursor_cell;
+        if (m_state.cursor_y < grid.height && m_state.cursor_x < grid.width) {
+            cursor_cell = grid.cells[m_state.cursor_y][m_state.cursor_x];
+        }
+
+        // Override cursor color with alpha
+        ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
+                            m_dark_mode ? 0.7f : 0.3f,
+                            m_dark_mode ? 0.7f : 0.3f, alpha};
+
+        if (cursor_cell.chars[0] != '\0') {
+            // Draw cursor background
+            draw_list->AddRectFilled(
+                cursor_pos,
+                ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
+                ImGui::ColorConvertFloat4ToU32(cursor_color));
+
+            // Draw the character
+            char text[TextWidget::g_utf_size] = {0};
+            size_t len = 0;
+            for (int i = 0; i < cursor_cell.width && i < 4; i++) {
+                len +=
+                    TextWidget::utf8_encode(cursor_cell.chars[i], &text[len]);
+            }
+            draw_list->AddText(cursor_pos,
+                               ImGui::ColorConvertFloat4ToU32(cursor_cell.fg),
+                               text);
+        } else {
+            // Just draw cursor
+            draw_list->AddRectFilled(
+                cursor_pos,
+                ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
+                ImGui::ColorConvertFloat4ToU32(cursor_color));
+        }
     }
 }
 
@@ -75,6 +192,12 @@ void NvimWidget::resize(uint32_t cols, uint32_t rows) {
     // Update nvim state
     m_state.row = rows;
     m_state.col = cols;
+
+    // Resize grid
+    auto it = m_grids.find(m_current_grid);
+    if (it != m_grids.end()) {
+        it->second.resize(cols, rows);
+    }
 
     // Ensure cursor stays within bounds
     m_state.cursor_x = std::min(m_state.cursor_x, cols - 1);
@@ -301,10 +424,374 @@ void NvimWidget::_handle_nvim_notification(const char* event,
 }
 
 void NvimWidget::_handle_nvim_redraw(const char* operation,
-                                     msgpack::object_array& args) {}
+                                     msgpack::object_array& args) {
+    if (strcmp(operation, "resize") == 0) {
+        _redraw_resize(args);
+    } else if (strcmp(operation, "clear") == 0) {
+        _redraw_clear(args);
+    } else if (strcmp(operation, "cursor_goto") == 0) {
+        _redraw_cursor_goto(args);
+    } else if (strcmp(operation, "put") == 0) {
+        _redraw_put(args);
+    } else if (strcmp(operation, "highlight_set") == 0) {
+        _redraw_highlight_set(args);
+    } else if (strcmp(operation, "flush") == 0) {
+        _redraw_flush(args);
+    } else if (strcmp(operation, "option_set") == 0) {
+        _redraw_option_set(args);
+    } else if (strcmp(operation, "set_title") == 0) {
+        _redraw_set_title(args);
+    } else if (strcmp(operation, "default_colors_set") == 0) {
+        _redraw_default_colors_set(args);
+    } else {
+        // LOG_DEBUG("Unhandled redraw operation: {}", operation);
+    }
+}
+
+void NvimWidget::_redraw_resize(msgpack::object_array& args) {
+    uint32_t grid_id = m_current_grid;
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    if (args.size == 2) {
+        // Format: [width, height] (no grid_id, use current)
+        if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+            LOG_WARN("resize: invalid argument types");
+            return;
+        }
+        width = args.ptr[0].as<uint32_t>();
+        height = args.ptr[1].as<uint32_t>();
+    } else if (args.size >= 3) {
+        // Format: [grid_id, width, height]
+        if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[2].type != msgpack::type::POSITIVE_INTEGER) {
+            LOG_WARN("resize: invalid argument types");
+            return;
+        }
+        grid_id = args.ptr[0].as<uint32_t>();
+        width = args.ptr[1].as<uint32_t>();
+        height = args.ptr[2].as<uint32_t>();
+    } else {
+        LOG_WARN("resize: expected 2 or 3 arguments, got {}", args.size);
+        return;
+    }
+
+    auto it = m_grids.find(grid_id);
+    if (it == m_grids.end()) {
+        Grid new_grid;
+        new_grid.id = grid_id;
+        new_grid.resize(width, height);
+        m_grids[grid_id] = std::move(new_grid);
+    } else {
+        it->second.resize(width, height);
+    }
+
+    if (grid_id == m_current_grid) {
+        m_state.col = width;
+        m_state.row = height;
+    }
+}
+
+void NvimWidget::_redraw_clear(msgpack::object_array& args) {
+    uint32_t grid_id = m_current_grid;
+
+    if (args.size >= 1 && args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        grid_id = args.ptr[0].as<uint32_t>();
+    }
+
+    auto it = m_grids.find(grid_id);
+    if (it != m_grids.end()) {
+        it->second.clear();
+    }
+}
+
+void NvimWidget::_redraw_cursor_goto(msgpack::object_array& args) {
+    uint32_t grid_id = m_current_grid;
+    uint32_t row = 0;
+    uint32_t col = 0;
+
+    if (args.size == 2) {
+        // Format: [row, col] (no grid_id, use current)
+        if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+            LOG_WARN("cursor_goto: invalid argument types");
+            return;
+        }
+        row = args.ptr[0].as<uint32_t>();
+        col = args.ptr[1].as<uint32_t>();
+    } else if (args.size >= 3) {
+        // Format: [grid_id, row, col]
+        if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[2].type != msgpack::type::POSITIVE_INTEGER) {
+            LOG_WARN("cursor_goto: invalid argument types");
+            return;
+        }
+        grid_id = args.ptr[0].as<uint32_t>();
+        row = args.ptr[1].as<uint32_t>();
+        col = args.ptr[2].as<uint32_t>();
+    } else {
+        LOG_WARN("cursor_goto: expected 2 or 3 arguments, got {}", args.size);
+        return;
+    }
+
+    m_current_grid = grid_id;
+    m_state.cursor_y = row;
+    m_state.cursor_x = col;
+}
+
+void NvimWidget::_redraw_put(msgpack::object_array& args) {
+    uint32_t grid_id = m_current_grid;
+    std::string text;
+
+    if (args.size == 1) {
+        // Format: [text] (no grid_id, use current)
+        if (args.ptr[0].type != msgpack::type::STR) {
+            LOG_WARN("put: invalid argument types");
+            return;
+        }
+        text = args.ptr[0].as<std::string>();
+    } else if (args.size >= 2) {
+        // Format: [grid_id, text]
+        if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[1].type != msgpack::type::STR) {
+            LOG_WARN("put: invalid argument types");
+            return;
+        }
+        grid_id = args.ptr[0].as<uint32_t>();
+        text = args.ptr[1].as<std::string>();
+    } else {
+        LOG_WARN("put: expected 1 or 2 arguments, got {}", args.size);
+        return;
+    }
+
+    auto it = m_grids.find(grid_id);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    Grid& grid = it->second;
+    if (m_state.cursor_y >= grid.height || m_state.cursor_x >= grid.width) {
+        return;
+    }
+
+    ScreenCell& cell = grid.cells[m_state.cursor_y][m_state.cursor_x];
+
+    // Decode UTF-8 text into the cell
+    cell.clear();
+    const char* ptr = text.c_str();
+    size_t remaining = text.length();
+    size_t offset = 0;
+    int char_count = 0;
+
+    while (remaining > 0 && char_count < 4) {
+        uint32_t rune;
+        size_t decoded =
+            TextWidget::utf8_decode(ptr + offset, &rune, remaining);
+        if (decoded == 0) {
+            break;
+        }
+        cell.chars[char_count++] = rune;
+        offset += decoded;
+        remaining -= decoded;
+    }
+
+    cell.width = std::max(1, char_count);
+    cell.fg = m_current_hl.fg;
+    cell.bg = m_current_hl.bg;
+    cell.bold = m_current_hl.bold;
+    cell.italic = m_current_hl.italic;
+    cell.underline = m_current_hl.underline;
+    cell.undercurl = m_current_hl.undercurl;
+    cell.reverse = m_current_hl.reverse;
+
+    // Advance cursor
+    m_state.cursor_x++;
+}
+
+void NvimWidget::_redraw_highlight_set(msgpack::object_array& args) {
+    uint32_t grid_id = m_current_grid;
+    msgpack::object_map* attr_map_ptr = nullptr;
+
+    if (args.size == 1) {
+        // Format: [attr_map] (no grid_id, use current)
+        if (args.ptr[0].type != msgpack::type::MAP) {
+            LOG_WARN("highlight_set: invalid argument types");
+            return;
+        }
+        attr_map_ptr = &args.ptr[0].via.map;
+    } else if (args.size >= 2) {
+        // Format: [grid_id, attr_map]
+        if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+            args.ptr[1].type != msgpack::type::MAP) {
+            LOG_WARN("highlight_set: invalid argument types");
+            return;
+        }
+        grid_id = args.ptr[0].as<uint32_t>();
+        attr_map_ptr = &args.ptr[1].via.map;
+    } else {
+        LOG_WARN("highlight_set: expected 1 or 2 arguments, got {}", args.size);
+        return;
+    }
+
+    msgpack::object_map& attr_map = *attr_map_ptr;
+
+    // Start with current highlight
+    HighlightAttr new_hl = m_current_hl;
+
+    for (size_t i = 0; i < attr_map.size; i++) {
+        auto& kv = attr_map.ptr[i];
+        if (kv.key.type != msgpack::type::STR) {
+            continue;
+        }
+        std::string key = kv.key.as<std::string>();
+
+        if (key == "foreground" &&
+            kv.val.type == msgpack::type::POSITIVE_INTEGER) {
+            uint32_t rgb = kv.val.as<uint32_t>();
+            new_hl.fg.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            new_hl.fg.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            new_hl.fg.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+            new_hl.fg.w = 1.0f;
+        } else if (key == "background" &&
+                   kv.val.type == msgpack::type::POSITIVE_INTEGER) {
+            uint32_t rgb = kv.val.as<uint32_t>();
+            new_hl.bg.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            new_hl.bg.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            new_hl.bg.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+            new_hl.bg.w = 1.0f;
+        } else if (key == "special" &&
+                   kv.val.type == msgpack::type::POSITIVE_INTEGER) {
+            uint32_t rgb = kv.val.as<uint32_t>();
+            new_hl.sp.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            new_hl.sp.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            new_hl.sp.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+            new_hl.sp.w = 1.0f;
+        } else if (key == "bold" && kv.val.type == msgpack::type::BOOLEAN) {
+            new_hl.bold = kv.val.as<bool>();
+        } else if (key == "italic" && kv.val.type == msgpack::type::BOOLEAN) {
+            new_hl.italic = kv.val.as<bool>();
+        } else if (key == "underline" &&
+                   kv.val.type == msgpack::type::BOOLEAN) {
+            new_hl.underline = kv.val.as<bool>();
+        } else if (key == "undercurl" &&
+                   kv.val.type == msgpack::type::BOOLEAN) {
+            new_hl.undercurl = kv.val.as<bool>();
+        } else if (key == "reverse" && kv.val.type == msgpack::type::BOOLEAN) {
+            new_hl.reverse = kv.val.as<bool>();
+        } else if (key == "id" &&
+                   kv.val.type == msgpack::type::POSITIVE_INTEGER) {
+            int hl_id = kv.val.as<int>();
+            m_hl_attrs[hl_id] = new_hl;
+        }
+    }
+
+    m_current_hl = new_hl;
+}
+
+void NvimWidget::_redraw_flush(msgpack::object_array& /*args*/) {
+    m_needs_render = true;
+}
+
+void NvimWidget::_redraw_option_set(msgpack::object_array& args) {
+    size_t option_name_idx = 0;
+
+    // Skip grid_id if present
+    if (args.size >= 2 && args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        option_name_idx = 1;
+    }
+
+    if (args.size < option_name_idx + 2) {
+        LOG_WARN("option_set: expected at least {} arguments, got {}",
+                 option_name_idx + 2, args.size);
+        return;
+    }
+    if (args.ptr[option_name_idx].type != msgpack::type::STR) {
+        LOG_WARN("option_set: option name must be a string");
+        return;
+    }
+
+    std::string option = args.ptr[option_name_idx].as<std::string>();
+}
+
+void NvimWidget::_redraw_set_title(msgpack::object_array& args) {
+    size_t title_idx = 0;
+
+    // Skip grid_id if present
+    if (args.size >= 2 && args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        title_idx = 1;
+    }
+
+    if (args.size < title_idx + 1) {
+        LOG_WARN("set_title: expected at least {} arguments, got {}",
+                 title_idx + 1, args.size);
+        return;
+    }
+    if (args.ptr[title_idx].type != msgpack::type::STR) {
+        LOG_WARN("set_title: title must be a string");
+        return;
+    }
+
+    std::string title = args.ptr[title_idx].as<std::string>();
+
+    // Use default title if empty
+    if (title.empty()) {
+        m_window_title = "nvim (no file)";
+    } else {
+        m_window_title = title;
+    }
+}
+
+void NvimWidget::_redraw_default_colors_set(msgpack::object_array& args) {
+    size_t color_idx = 0;
+
+    // Skip grid_id if present
+    if (args.size >= 1 && args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        // Check if the first argument is a grid_id (small integer) or rgb color
+        // Grid ids are usually 1, 2, etc. while rgb colors are 24-bit values
+        uint32_t first_val = args.ptr[0].as<uint32_t>();
+        if (first_val < 256) {
+            // Likely a grid_id, skip it
+            color_idx = 1;
+        }
+    }
+
+    if (args.size < color_idx + 3) {
+        LOG_WARN("default_colors_set: expected at least {} arguments, got {}",
+                 color_idx + 3, args.size);
+        return;
+    }
+
+    if (args.ptr[color_idx].type == msgpack::type::POSITIVE_INTEGER) {
+        uint32_t rgb = args.ptr[color_idx].as<uint32_t>();
+        m_default_fg.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+        m_default_fg.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+        m_default_fg.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+        m_default_fg.w = 1.0f;
+        m_current_hl.fg = m_default_fg;
+    }
+    if (args.ptr[color_idx + 1].type == msgpack::type::POSITIVE_INTEGER) {
+        uint32_t rgb = args.ptr[color_idx + 1].as<uint32_t>();
+        m_default_bg.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+        m_default_bg.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+        m_default_bg.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+        m_default_bg.w = 1.0f;
+        m_current_hl.bg = m_default_bg;
+    }
+    if (args.ptr[color_idx + 2].type == msgpack::type::POSITIVE_INTEGER) {
+        uint32_t rgb = args.ptr[color_idx + 2].as<uint32_t>();
+        m_default_sp.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+        m_default_sp.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+        m_default_sp.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+        m_default_sp.w = 1.0f;
+        m_current_hl.sp = m_default_sp;
+    }
+}
 
 void NvimWidget::_handle_nvim_gui_event(const char* event,
-                                        msgpack::object_array& args) {}
+                                        msgpack::object_array& /*args*/) {}
 
 void NvimWidget::_check_font_size_changed() {
     float current_font_size = ImGui::GetFontBaked()->Size;

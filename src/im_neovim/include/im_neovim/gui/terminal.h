@@ -1,6 +1,7 @@
 #pragma once
 
 #include "im_app/pty.h"
+#include "im_neovim/gui/text_widget.h"
 #include "imgui.h"
 #include <cstdint>
 #include <mutex>
@@ -14,7 +15,7 @@ using uchar = unsigned char;
 
 static constexpr size_t g_utf_size = 4;
 
-class Terminal {
+class Terminal : public TextWidget {
   public:
     // Common type definitions
     using Rune = uint_least32_t;
@@ -75,7 +76,6 @@ class Terminal {
 
     // Render helper functions
     void _check_font_size_changed();
-    bool _setup_window();
     void _handle_terminal_resize();
     void _handle_scrollback(const ImGuiIO& io, int new_rows);
     void _handle_mouse_input(const ImGuiIO& io);
@@ -102,6 +102,10 @@ class Terminal {
     void _handle_vterm_cell_colors(VTermScreenCell& cell, ImVec4& fg,
                                    ImVec4& bg);
 
+    // Helper to convert VTermScreenCell to ScreenCell
+    void _vterm_cell_to_screen_cell(VTermScreenCell& vterm_cell,
+                                    ScreenCell& screen_cell);
+
     void _selection_start(int col, int row);
     void _selection_extend(int col, int row);
     void _selection_clear();
@@ -123,16 +127,6 @@ class Terminal {
     void _selection_normalize();
 
     void _ring_bell() const;
-
-    // UTF-8 handling
-    static size_t _utf8_decode(const char* c, Rune* u, size_t clen);
-    static size_t _utf8_encode(Rune u, char* c);
-
-    static constexpr const uchar g_utfmask[5] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
-    static constexpr const Rune g_utfmin[5] = {0, 0, 0x80, 0x800, 0x10000};
-    static constexpr const Rune g_utfmax[5] = {0x10FFFF, 0x7F, 0x7FF, 0xFFFF,
-                                               0x10FFFF};
-    static const Rune g_utf_invalid = 0xFFFD; // Unicode replacement character
 
     // vterm callback
     VTermScreenCallbacks m_vterm_screen_callbacks;
@@ -163,15 +157,6 @@ class Terminal {
     static constexpr float g_drag_threshold = 3.0f;
     Selection m_selection;
 
-    std::string m_window_title;
-    bool m_is_visible{true};
-    bool m_is_embedded{false};
-
-    // Embedded terminal window state
-    ImVec2 m_embedded_window_pos{100.0f, 100.0f};
-    ImVec2 m_embedded_window_size{800.0f, 400.0f};
-    bool m_embedded_window_collapsed{false};
-
     // Thread and synchronization
     std::mutex m_buffer_mutex;
     std::thread m_read_thread;
@@ -184,34 +169,10 @@ class Terminal {
     VTerm* m_vterm{nullptr};
     VTermScreen* m_vterm_screen{nullptr};
 
-    float m_last_font_size = 0;
-
     TCursor m_saved_cursor; // For cursor save/restore
 
     std::vector<std::vector<VTermScreenCell>> m_sb_buffer;
     size_t m_max_scrollback_lines = 10000;
     int m_scroll_offset = 0;
-
-    ImVec4 m_default_color_map[16] = {
-        // Standard colors
-        ImVec4(0.0f, 0.0f, 0.0f, 1.0f), // Black
-        ImVec4(0.8f, 0.2f, 0.2f, 1.0f), // Rich Red
-        ImVec4(0.2f, 0.8f, 0.2f, 1.0f), // Vibrant Green
-        ImVec4(0.9f, 0.9f, 0.3f, 1.0f), // Sunny Yellow
-        ImVec4(0.2f, 0.5f, 1.0f, 1.0f), // Sky Blue (brighter blue)
-        ImVec4(0.8f, 0.3f, 0.8f, 1.0f), // Electric Purple
-        ImVec4(0.3f, 0.8f, 0.8f, 1.0f), // Aqua Cyan
-        ImVec4(0.9f, 0.9f, 0.9f, 1.0f), // Off-White
-
-        // Bright colors (pastel-like but still vibrant)
-        ImVec4(0.5f, 0.5f, 0.5f, 1.0f), // Medium Gray
-        ImVec4(1.0f, 0.4f, 0.4f, 1.0f), // Coral Red
-        ImVec4(0.4f, 1.0f, 0.4f, 1.0f), // Lime Green
-        ImVec4(1.0f, 1.0f, 0.6f, 1.0f), // Lemon Yellow
-        ImVec4(0.4f, 0.6f, 1.0f, 1.0f), // Bright Sky Blue
-        ImVec4(1.0f, 0.5f, 1.0f, 1.0f), // Pink Purple
-        ImVec4(0.5f, 1.0f, 1.0f, 1.0f), // Ice Blue
-        ImVec4(1.0f, 1.0f, 1.0f, 1.0f)  // Pure White
-    };
 };
 } // namespace ImNeovim

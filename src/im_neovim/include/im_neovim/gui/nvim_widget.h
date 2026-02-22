@@ -1,4 +1,5 @@
 #pragma once
+#include "im_neovim/gui/text_widget.h"
 #include <atomic>
 #include <functional>
 #include <imgui.h>
@@ -9,16 +10,17 @@
 #include <string>
 #include <unordered_map>
 #include <uv.h>
+#include <vector>
 
 namespace ImNeovim {
 class NvimRequest;
-class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
+class NvimWidget : public TextWidget, public std::enable_shared_from_this<NvimWidget> {
   public:
     NvimWidget();
     ~NvimWidget();
 
     void open_file();
-    void render();
+    void render() override;
     void resize(uint32_t cols, uint32_t rows);
 
     std::shared_ptr<NvimRequest> start_nvim_request(
@@ -43,6 +45,19 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
     /* GUI-related methods */
     void _check_font_size_changed();
     void _handle_nvim_resize();
+    void _render_grid(ImDrawList* draw_list, const ImVec2& pos,
+                     float char_width, float line_height);
+
+    /* Redraw operation handlers */
+    void _redraw_resize(msgpack::object_array& args);
+    void _redraw_clear(msgpack::object_array& args);
+    void _redraw_cursor_goto(msgpack::object_array& args);
+    void _redraw_put(msgpack::object_array& args);
+    void _redraw_highlight_set(msgpack::object_array& args);
+    void _redraw_flush(msgpack::object_array& args);
+    void _redraw_option_set(msgpack::object_array& args);
+    void _redraw_set_title(msgpack::object_array& args);
+    void _redraw_default_colors_set(msgpack::object_array& args);
 
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
@@ -67,16 +82,51 @@ class NvimWidget : public std::enable_shared_from_this<NvimWidget> {
     void _dispatch_response(msgpack::object& resp);
     void _dispatch_notification(msgpack::object& nt);
 
+    // Highlight attributes structure
+    struct HighlightAttr {
+        ImVec4 fg;
+        ImVec4 bg;
+        ImVec4 sp;
+        bool bold : 1;
+        bool italic : 1;
+        bool underline : 1;
+        bool undercurl : 1;
+        bool reverse : 1;
+
+        HighlightAttr();
+    };
+
+    // Grid structure
+    struct Grid {
+        uint32_t id;
+        uint32_t width;
+        uint32_t height;
+        std::vector<std::vector<ScreenCell>> cells;
+
+        Grid();
+        void clear();
+        void resize(uint32_t w, uint32_t h);
+    };
+
     struct NvimState {
         uint32_t cursor_x{0};
         uint32_t cursor_y{0};
         uint32_t row{0};
         uint32_t col{0};
     } m_state;
-    std::string m_window_title;
-    float m_last_font_size{0.0f};
+
+    // Grid and highlight state
+    std::unordered_map<uint32_t, Grid> m_grids;
+    uint32_t m_current_grid{1};
+    std::unordered_map<int, HighlightAttr> m_hl_attrs;
+    HighlightAttr m_current_hl;
+    ImVec4 m_default_fg;
+    ImVec4 m_default_bg;
+    ImVec4 m_default_sp;
 
     ImVec2 m_window_size{800.0f, 400.0f};
+    bool m_dark_mode{true};
+    bool m_needs_render{true};
 
     uv_process_t m_nvim_proc;
     uv_pipe_t m_in_pipe;

@@ -6,7 +6,8 @@
 namespace ImNeovim {
 #define BETWEEN(x, a, b) ((a) <= (x) && (x) <= (b))
 
-Terminal::Terminal() : m_window_title("Terminal"), m_dark_mode(true) {
+Terminal::Terminal() : m_dark_mode(true) {
+    m_window_title = "Terminal";
     m_pty = ImApp::PseudoTerminal::create();
 
     // Initialize with safe default size
@@ -81,7 +82,7 @@ void Terminal::render() {
     }
 
     _check_font_size_changed();
-    bool window_created = _setup_window();
+    bool window_created = TextWidget::setup_window();
 
     // Only render terminal content if window is open and not collapsed
     if (window_created && (m_is_embedded || !m_embedded_window_collapsed)) {
@@ -245,27 +246,24 @@ void Terminal::_check_font_size_changed() {
     }
 }
 
-bool Terminal::_setup_window() {
-    if (m_is_embedded) {
-        return true;
+// Helper to convert VTermScreenCell to ScreenCell
+void Terminal::_vterm_cell_to_screen_cell(VTermScreenCell& vterm_cell,
+                                          ScreenCell& screen_cell) {
+    // Copy characters
+    for (int i = 0; i < 4; i++) {
+        screen_cell.chars[i] = vterm_cell.chars[i];
     }
-    ImGui::SetNextWindowPos(m_embedded_window_pos, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(m_embedded_window_size, ImGuiCond_FirstUseEver);
+    screen_cell.width = static_cast<unsigned char>(vterm_cell.width);
 
-    bool window_open = true;
-    bool window_created = ImGui::Begin(m_window_title.c_str(), &window_open,
-                                       ImGuiWindowFlags_NoCollapse);
-    if (window_created) {
-        m_embedded_window_pos = ImGui::GetWindowPos();
-        m_embedded_window_size = ImGui::GetWindowSize();
-        m_embedded_window_collapsed = ImGui::IsWindowCollapsed();
-        if (!window_open) {
-            m_is_visible = false;
-        }
-    } else {
-        m_embedded_window_collapsed = true;
-    }
-    return window_created;
+    // Handle colors
+    _handle_vterm_cell_colors(vterm_cell, screen_cell.fg, screen_cell.bg);
+
+    // Copy attributes
+    screen_cell.bold = vterm_cell.attrs.bold;
+    screen_cell.italic = vterm_cell.attrs.italic;
+    screen_cell.underline = vterm_cell.attrs.underline;
+    screen_cell.undercurl = false; // VTerm doesn't have undercurl
+    screen_cell.reverse = vterm_cell.attrs.reverse;
 }
 
 void Terminal::_handle_terminal_resize() {
@@ -656,36 +654,10 @@ void Terminal::_render_selection_highlight(ImDrawList* draw_list,
 void Terminal::_render_vterm_cell(ImDrawList* draw_list, VTermScreenCell& cell,
                                   const ImVec2& char_pos, float char_width,
                                   float line_height) {
-    ImVec4 fg{m_dark_mode ? 1.0f : 0.0f, m_dark_mode ? 1.0f : 0.0f,
-              m_dark_mode ? 1.0f : 0.0f, 1.0f};
-    ImVec4 bg{m_dark_mode ? 0.0f : 1.0f, m_dark_mode ? 0.0f : 1.0f,
-              m_dark_mode ? 0.0f : 1.0f, 1.0f};
-    _handle_vterm_cell_colors(cell, fg, bg);
-
-    // Draw background
-    if (bg.x != 0 || bg.y != 0 || bg.z != 0 || (cell.attrs.reverse)) {
-        draw_list->AddRectFilled(
-            char_pos, ImVec2(char_pos.x + char_width, char_pos.y + line_height),
-            ImGui::ColorConvertFloat4ToU32(bg));
-    }
-
-    // Draw character
-    if (cell.width > 0) {
-        char text[g_utf_size] = {0};
-        size_t len = 0;
-        for (char i = 0; i < cell.width; i++) {
-            len += _utf8_encode(cell.chars[i], &text[len]);
-        }
-        draw_list->AddText(char_pos, ImGui::ColorConvertFloat4ToU32(fg), text);
-    }
-
-    // Draw underline
-    if (cell.attrs.underline) {
-        draw_list->AddLine(
-            ImVec2(char_pos.x, char_pos.y + line_height - 1),
-            ImVec2(char_pos.x + char_width, char_pos.y + line_height - 1),
-            ImGui::ColorConvertFloat4ToU32(fg));
-    }
+    ScreenCell screen_cell;
+    _vterm_cell_to_screen_cell(cell, screen_cell);
+    TextWidget::render_cell(draw_list, screen_cell, char_pos, char_width,
+                            line_height);
 }
 
 void Terminal::_handle_vterm_cell_colors(VTermScreenCell& cell, ImVec4& fg,
@@ -733,31 +705,30 @@ void Terminal::_handle_vterm_cell_colors(VTermScreenCell& cell, ImVec4& fg,
 void Terminal::_render_cursor(ImDrawList* draw_list, const ImVec2& cursor_pos,
                               VTermScreenCell& cursor_cell, float char_width,
                               float line_height, float alpha) {
-    if (cursor_cell.chars[0] != '\0') {
-        char text[g_utf_size] = {0};
-        size_t len = 0;
-        for (char i = 0; i < cursor_cell.width; i++) {
-            len += _utf8_encode(cursor_cell.chars[i], &text[len]);
-        }
-        ImVec4 fg{m_dark_mode ? 1.0f : 0.0f, m_dark_mode ? 1.0f : 0.0f,
-                  m_dark_mode ? 1.0f : 0.0f, 1.0f};
-        ImVec4 bg{m_dark_mode ? 0.0f : 1.0f, m_dark_mode ? 0.0f : 1.0f,
-                  m_dark_mode ? 0.0f : 1.0f, 1.0f};
-        _handle_vterm_cell_colors(cursor_cell, fg, bg);
+    ScreenCell screen_cell;
+    _vterm_cell_to_screen_cell(cursor_cell, screen_cell);
 
-        ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
-                            m_dark_mode ? 0.7f : 0.3f,
-                            m_dark_mode ? 0.7f : 0.3f, alpha};
+    // Override cursor color with alpha blending
+    ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f, m_dark_mode ? 0.7f : 0.3f,
+                        m_dark_mode ? 0.7f : 0.3f, alpha};
+
+    if (screen_cell.chars[0] != '\0') {
+        // Draw cursor background
         draw_list->AddRectFilled(
             cursor_pos,
             ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
             ImGui::ColorConvertFloat4ToU32(cursor_color));
-        draw_list->AddText(cursor_pos, ImGui::ColorConvertFloat4ToU32(fg),
-                           text);
+
+        // Draw the character
+        char text[g_utf_size] = {0};
+        size_t len = 0;
+        for (int i = 0; i < screen_cell.width && i < 4; i++) {
+            len += TextWidget::utf8_encode(screen_cell.chars[i], &text[len]);
+        }
+        draw_list->AddText(
+            cursor_pos, ImGui::ColorConvertFloat4ToU32(screen_cell.fg), text);
     } else {
-        ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
-                            m_dark_mode ? 0.7f : 0.3f,
-                            m_dark_mode ? 0.7f : 0.3f, alpha};
+        // Just draw cursor
         draw_list->AddRectFilled(
             cursor_pos,
             ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
@@ -852,7 +823,7 @@ void Terminal::_get_selection(std::string& selected) {
             char buf[g_utf_size];
             size_t len = 0;
             for (char i = 0; i < cell->width; i++) {
-                len += _utf8_encode(cell->chars[i], &buf[len]);
+                len += utf8_encode(cell->chars[i], &buf[len]);
             }
             selected.append(buf, len);
         }
@@ -988,94 +959,6 @@ void Terminal::_selection_normalize() {
 void Terminal::_ring_bell() const {
     // System bell or audio bell
     // Implement platform-specific bell
-}
-
-size_t Terminal::_utf8_decode(const char* c, Rune* u, size_t clen) {
-    *u = g_utf_invalid;
-    size_t len = 0;
-    Rune udecoded = 0;
-
-    // Determine sequence length and initial byte decoding
-    if ((c[0] & 0x80) == 0) {
-        // ASCII character
-        *u = static_cast<uchar>(c[0]);
-        return 1;
-    } else if ((c[0] & 0xE0) == 0xC0) {
-        // 2-byte sequence
-        len = 2;
-        udecoded = c[0] & 0x1F;
-    } else if ((c[0] & 0xF0) == 0xE0) {
-        // 3-byte sequence (used by box drawing characters)
-        len = 3;
-        udecoded = c[0] & 0x0F;
-    } else if ((c[0] & 0xF8) == 0xF0) {
-        // 4-byte sequence
-        len = 4;
-        udecoded = c[0] & 0x07;
-    } else {
-        LOG_ERROR("Invalid UTF-8 start byte: 0x{:x}", static_cast<int>(c[0]));
-        return 0;
-    }
-
-    // Validate sequence length
-    if (clen < len) {
-        LOG_ERROR("Incomplete UTF-8 sequence. Expected {} bytes, got {}", len,
-                  clen);
-        return 0;
-    }
-
-    // Process continuation bytes
-    for (size_t i = 1; i < len; i++) {
-        // Validate continuation byte
-        if ((c[i] & 0xC0) != 0x80) {
-            LOG_ERROR("Invalid continuation byte at position {}: 0x{:x}", i,
-                      static_cast<int>(c[i]));
-            return 0;
-        }
-
-        // Shift and add continuation byte
-        udecoded = (udecoded << 6) | (c[i] & 0x3F);
-    }
-
-    // Additional validation for decoded Unicode point
-    if (!BETWEEN(udecoded,         // NOLINT(readability-simplify-boolean-expr)
-                 g_utfmin[len],    // NOLINT(readability-simplify-boolean-expr)
-                 g_utfmax[len]) || // NOLINT(readability-simplify-boolean-expr)
-        BETWEEN(udecoded, 0xD800, 0xDFFF) ||
-        udecoded > 0x10FFFF) {
-        LOG_ERROR("Invalid Unicode code point : U+{:x}", udecoded);
-        *u = g_utf_invalid;
-        return 0;
-    }
-
-    *u = udecoded;
-    return len;
-}
-
-size_t Terminal::_utf8_encode(Rune u, char* c) {
-    size_t len = 0;
-
-    if (u < 0x80) {
-        c[0] = u;
-        len = 1;
-    } else if (u < 0x800) {
-        c[0] = 0xC0 | (u >> 6);
-        c[1] = 0x80 | (u & 0x3F);
-        len = 2;
-    } else if (u < 0x10000) {
-        c[0] = 0xE0 | (u >> 12);
-        c[1] = 0x80 | ((u >> 6) & 0x3F);
-        c[2] = 0x80 | (u & 0x3F);
-        len = 3;
-    } else {
-        c[0] = 0xF0 | (u >> 18);
-        c[1] = 0x80 | ((u >> 12) & 0x3F);
-        c[2] = 0x80 | ((u >> 6) & 0x3F);
-        c[3] = 0x80 | (u & 0x3F);
-        len = 4;
-    }
-
-    return len;
 }
 
 #pragma region vterm callbacks
