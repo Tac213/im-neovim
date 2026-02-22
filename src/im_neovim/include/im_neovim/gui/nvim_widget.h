@@ -45,6 +45,7 @@ class NvimWidget : public TextWidget, public std::enable_shared_from_this<NvimWi
     /* GUI-related methods */
     void _check_font_size_changed();
     void _handle_nvim_resize();
+    void _notify_nvim_resize(uint32_t cols, uint32_t rows);
     void _render_grid(ImDrawList* draw_list, const ImVec2& pos,
                      float char_width, float line_height);
 

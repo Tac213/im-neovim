@@ -171,27 +171,18 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
 }
 
 void NvimWidget::resize(uint32_t cols, uint32_t rows) {
-    // Get actual content area size
-    ImVec2 content_size = ImGui::GetContentRegionAvail();
-    float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
-    float line_height = ImGui::GetTextLineHeight();
-
-    // Calculate new dimensions based on actual font metrics
-    uint32_t new_cols =
-        std::max(static_cast<uint32_t>(1),
-                 static_cast<uint32_t>(content_size.x / char_width));
-    uint32_t new_rows =
-        std::max(static_cast<uint32_t>(1),
-                 static_cast<uint32_t>(content_size.y / line_height));
+    // Ensure minimum size
+    cols = std::max(1u, cols);
+    rows = std::max(1u, rows);
 
     // Only resize if dimensions actually changed
-    if (new_cols == m_state.col && new_rows == m_state.row) {
+    if (cols == m_state.col && rows == m_state.row) {
         return;
     }
 
     // Update nvim state
-    m_state.row = rows;
     m_state.col = cols;
+    m_state.row = rows;
 
     // Resize grid
     auto it = m_grids.find(m_current_grid);
@@ -202,6 +193,11 @@ void NvimWidget::resize(uint32_t cols, uint32_t rows) {
     // Ensure cursor stays within bounds
     m_state.cursor_x = std::min(m_state.cursor_x, cols - 1);
     m_state.cursor_y = std::min(m_state.cursor_y, rows - 1);
+
+    // Notify nvim if attached
+    if (m_nvim_attached) {
+        _notify_nvim_resize(cols, rows);
+    }
 
     LOG_DEBUG("Nvim widget resized to {}x{}", cols, rows);
 }
@@ -806,14 +802,25 @@ void NvimWidget::_handle_nvim_resize() {
     float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
     float line_height = ImGui::GetTextLineHeight();
 
-    int new_cols = std::max(1, static_cast<int>(content_size.x / char_width));
-    int new_rows = std::max(1, static_cast<int>(content_size.y / line_height));
+    uint32_t new_cols =
+        std::max(1u, static_cast<uint32_t>(content_size.x / char_width));
+    uint32_t new_rows =
+        std::max(1u, static_cast<uint32_t>(content_size.y / line_height));
 
     if (new_cols != m_state.col || new_rows != m_state.row) {
         LOG_DEBUG("Resizing nvim widget.");
-
         resize(new_cols, new_rows);
     }
+}
+
+void NvimWidget::_notify_nvim_resize(uint32_t cols, uint32_t rows) {
+    if (!m_nvim_attached) {
+        return;
+    }
+
+    auto req = start_nvim_request("nvim_ui_try_resize", 2, nullptr, nullptr);
+    req->arg_uint32(cols);
+    req->arg_uint32(rows);
 }
 
 /**
@@ -857,16 +864,25 @@ void NvimWidget::_send_nvim_error(uint32_t msgid, const std::string& msg) {
 void NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
     if (msgpack_data.empty())
         return;
-
-    msgpack::unpacked result;
     std::size_t len = msgpack_data.size();
     std::size_t off = 0;
-    while (off != len) {
+    while (off < len) {
         msgpack::unpacked result;
-        msgpack::unpack(result, msgpack_data.data(), len, off);
-        LOG_DEBUG("Parsed a complete nvim msgpack package (offset: {})", off);
-        msgpack::object obj(result.get());
-        _dispatch(obj);
+        try {
+            msgpack::unpack(result, msgpack_data.data(), len, off);
+            LOG_DEBUG("Parsed a complete nvim msgpack package (offset: {})",
+                      off);
+            msgpack::object obj(result.get());
+            _dispatch(obj);
+        } catch (const msgpack::insufficient_bytes&) { // Incomplete data - stop
+                                                       // and wait for more
+            LOG_DEBUG("Incomplete msgpack data, waiting for more (offset: {})",
+                      off);
+            break;
+        } catch (const std::exception& e) {
+            LOG_ERROR("Failed to parse nvim msgpack data: {}", e.what());
+            break;
+        }
     }
 }
 
