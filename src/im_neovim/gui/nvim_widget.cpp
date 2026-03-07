@@ -81,7 +81,28 @@ NvimWidget::~NvimWidget() {
     m_requests.clear();
 }
 
-void NvimWidget::open_file() {}
+void NvimWidget::open_file(const std::string& path) {
+    // Escape the path for use in a vim command
+    std::string escaped_path = path;
+    // Replace backslashes with forward slashes for vim
+    std::replace(escaped_path.begin(), escaped_path.end(), '\\', '/');
+
+    // Build the edit command
+    std::string cmd = "edit " + escaped_path;
+
+    // Send the command to nvim via nvim_command
+    auto request = start_nvim_request(
+        "nvim_command", 1,
+        [](msgpack::object&) { LOG_DEBUG("File opened successfully"); },
+        [](int32_t error_code, const std::string& error_msg) {
+            LOG_ERROR("Failed to open file: {} - {}", error_code, error_msg);
+        });
+
+    if (request) {
+        request->arg_str(cmd.size());
+        request->arg_str_body(cmd.data(), cmd.size());
+    }
+}
 
 void NvimWidget::render() {
     if (m_nvim_proc.pid == 0) {
@@ -1167,10 +1188,12 @@ void NvimRequest::_send() {
 
 #define TRY_TO_SEND()                                                          \
     do {                                                                       \
-        if (!m_container_stack.empty()) {                                      \
+        while (!m_container_stack.empty()) {                                   \
             m_container_stack.top() -= 1;                                      \
             if (m_container_stack.top() == 0) {                                \
                 m_container_stack.pop();                                       \
+            } else {                                                           \
+                break;                                                         \
             }                                                                  \
         }                                                                      \
         if (m_container_stack.empty()) {                                       \
@@ -1436,7 +1459,6 @@ void NvimRequest::arg_bin(size_t l) {
     }
     m_packer->pack_bin(l);
     m_container_stack.push(1);
-    TRY_TO_SEND();
 }
 
 void NvimRequest::arg_bin_body(const char* b, size_t l) {
@@ -1452,7 +1474,6 @@ void NvimRequest::arg_str(size_t l) {
         return;
     m_packer->pack_str(l);
     m_container_stack.push(1);
-    TRY_TO_SEND();
 }
 
 void NvimRequest::arg_str_body(const char* b, size_t l) {
@@ -1467,7 +1488,6 @@ void NvimRequest::arg_ext(size_t l, int8_t type) {
         return;
     m_packer->pack_ext(l, type);
     m_container_stack.push(1);
-    TRY_TO_SEND();
 }
 
 void NvimRequest::arg_ext_body(const char* b, size_t l) {

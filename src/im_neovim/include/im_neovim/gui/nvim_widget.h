@@ -14,12 +14,13 @@
 
 namespace ImNeovim {
 class NvimRequest;
-class NvimWidget : public TextWidget, public std::enable_shared_from_this<NvimWidget> {
+class NvimWidget : public TextWidget,
+                   public std::enable_shared_from_this<NvimWidget> {
   public:
     NvimWidget();
     ~NvimWidget();
 
-    void open_file();
+    void open_file(const std::string& path);
     void render() override;
     void resize(uint32_t cols, uint32_t rows);
 
@@ -47,7 +48,7 @@ class NvimWidget : public TextWidget, public std::enable_shared_from_this<NvimWi
     void _handle_nvim_resize();
     void _notify_nvim_resize(uint32_t cols, uint32_t rows);
     void _render_grid(ImDrawList* draw_list, const ImVec2& pos,
-                     float char_width, float line_height);
+                      float char_width, float line_height);
 
     /* Redraw operation handlers */
     void _redraw_resize(msgpack::object_array& args);
