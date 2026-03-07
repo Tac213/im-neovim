@@ -1,0 +1,21 @@
+schema: spec-driven
+
+context: |
+  Tech stack: C++
+  Build system: CMake
+  GUI framework: ImGui
+  Code style: See '.clang-tidy' and '.clang-format'
+
+  Cross-platform requirements:
+  - This tool runs on macOS, Linux, AND Windows
+  - Always use `std::filesystem::path` for file paths
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
