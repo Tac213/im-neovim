@@ -1,0 +1,146 @@
+```
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+ImNeovim is an ImGui-based graphical user interface for Neovim. It embeds Neovim and provides a modern, customizable UI using ImGui, with support for multiple platforms (Windows, Linux, macOS) and graphics backends (OpenGL, DirectX 12, Metal).
+
+## Repository Structure
+
+```
+├── src/
+│   ├── im_app/              # Core application framework (cross-platform)
+│   │   ├── interfaces/      # Abstract interfaces for graphics, window, renderer
+│   │   ├── platforms/       # Platform-specific implementations
+│   │   │   ├── win32/       # Windows implementation
+│   │   │   ├── linux/       # Linux implementation (GLFW-based)
+│   │   │   └── darwin/      # macOS implementation
+│   │   └── application.cpp  # Main application logic
+│   └── im_neovim/           # Neovim integration
+│       ├── include/         # Private headers
+│       ├── gui/             # GUI widgets (text_widget, terminal, nvim_widget)
+│       ├── layers/          # Layer implementations (libuv)
+│       └── im_neovim_app.cpp # Main entry point for ImNeovim
+├── include/
+│   └── im_app/              # Public API headers
+├── thirdparty/              # Submodules and dependencies
+│   ├── imgui/               # ImGui library
+│   ├── glfw/                # GLFW window library (Linux/macOS)
+│   ├── glew/                # OpenGL extension loader
+│   ├── spdlog/              # Logging library
+│   ├── fmt/                 # Formatting library
+│   ├── libvterm/            # Terminal emulation library
+│   ├── libuv/               # Async I/O library
+│   ├── msgpack-c/           # MessagePack serialization
+│   └── DirectX-Headers/     # DirectX headers (Windows)
+├── build/                   # Build output directory
+│   └── claude/              # Claude-specific build directory (for tool operations)
+├── bin/                     # Binary tools
+└── CMakeLists.txt           # Root CMake configuration
+```
+
+## Build System
+
+### Prerequisites
+
+- CMake 3.24 or later
+- C++23 compiler (MSVC on Windows, GCC on Linux, Clang on macOS)
+- Git with submodules initialized
+
+### Building on Windows
+
+```bash
+# Initialize submodules
+git submodule update --init --recursive
+
+# Build (using separate build/claude directory)
+rm -rf build/claude
+cmake -B build/claude -G "Visual Studio 17 2022" -A x64
+cmake --build build/claude --config Debug
+```
+
+### Building on Linux/macOS
+
+```bash
+# Initialize submodules
+git submodule update --init --recursive
+
+# Build (using separate build/claude directory)
+rm -rf build/claude
+cmake -B build/claude -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/claude -j$(nproc)
+```
+
+## Key Components
+
+### Core Application Framework (im_app library)
+
+- `application.h/cpp`: Main application lifecycle management
+- `layer.h`: Layer system for extending functionality
+- `window.h`: Abstract window interface (platform-specific implementations in platforms/)
+- `graphics_context.h`: Abstract graphics context (WGL, GLFW GL, Metal, DirectX 12)
+- `imgui_renderer.h`: Abstract ImGui renderer interface (platform/graphics-specific)
+- `file_system.h`: File system operations (platform-specific)
+- `pty.h`: Pseudoterminal interface (for Neovim communication)
+
+### Neovim Integration (im_neovim executable)
+
+- `nvim_widget.h/cpp`: Main widget for embedding Neovim
+- `text_widget.h/cpp`: Text rendering widget
+- `terminal.h/cpp`: Terminal emulation using libvterm
+- `layer_libuv.h/cpp`: libuv integration for async operations
+- `globals.h/cpp`: Global state management
+
+## Development Workflow
+
+### Common Tasks
+
+1. **Building the project**: Use build/claude directory as specified above
+2. **Formatting code**: Use clang-format (configuration in .clang-format)
+3. **Linting**: Use clang-tidy (configuration in .clang-tidy)
+4. **Debugging**:
+   - On Windows: Use Visual Studio debugger with build/claude/Debug/im_neovim.exe
+   - On Linux/macOS: Use GDB/LLDB with build/claude/im_neovim
+
+### Adding New Features
+
+1. Follow existing patterns in the codebase
+2. Implement cross-platform abstractions in `src/im_app/interfaces/`
+3. Add platform-specific implementations in `src/im_app/platforms/<os>/`
+4. Update CMakeLists.txt if adding new files
+5. Test on all supported platforms if possible
+
+## Dependencies
+
+- **ImGui**: UI framework
+- **GLFW**: Window management (Linux/macOS)
+- **GLEW**: OpenGL extensions
+- **spdlog**: Logging
+- **fmt**: String formatting
+- **libvterm**: Terminal emulation
+- **libuv**: Async I/O
+- **msgpack-c**: MessagePack serialization
+- **Neovim**: Embedded Neovim instance (built as external project)
+
+## Platform-Specific Notes
+
+### Windows
+
+- Uses DirectX 12 or OpenGL (WGL) graphics backends
+- Window management via Win32 API
+- Visual Studio 2022 solution generated in build/claude/ImNeovim.sln
+
+### Linux
+
+- Uses GLFW for window management
+- OpenGL graphics backend
+- Requires X11 or Wayland display server
+
+### macOS
+
+- Uses Metal graphics backend
+- Cocoa window management
+- Objective-C++ implementation
+```
