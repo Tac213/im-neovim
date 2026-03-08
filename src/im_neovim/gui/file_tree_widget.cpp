@@ -1,5 +1,4 @@
 #include "im_neovim/gui/file_tree_widget.h"
-#include "im_neovim/gui/nvim_widget.h"
 #include "im_neovim/logging.h"
 #include <algorithm>
 #include <imgui.h>
@@ -14,10 +13,7 @@ FileTreeWidget::FileTreeWidget()
     m_root_entry.is_expanded = true;
 }
 
-FileTreeWidget::~FileTreeWidget() {
-    _stop_watching();
-    m_nvim_widget.reset();
-}
+FileTreeWidget::~FileTreeWidget() { _stop_watching(); }
 
 void FileTreeWidget::set_current_directory(const std::filesystem::path& path) {
     if (std::filesystem::is_directory(path)) {
@@ -175,7 +171,7 @@ void FileTreeWidget::_on_item_clicked(const std::filesystem::path& path,
         _toggle_expand(m_root_entry); // This will be called from within
                                       // _render_directory_node
     } else {
-        _open_file_in_nvim(path);
+        file_clicked.emit(path.string());
     }
 }
 
@@ -183,17 +179,6 @@ void FileTreeWidget::_toggle_expand(DirectoryEntry& entry) {
     entry.is_expanded = !entry.is_expanded;
     if (entry.is_expanded && entry.children.empty()) {
         _scan_directory(entry);
-    }
-}
-
-void FileTreeWidget::_open_file_in_nvim(const std::filesystem::path& path) {
-    if (m_nvim_widget) {
-        // Convert path to string
-        std::string path_str = path.string();
-
-        // Use NvimWidget to open the file
-        m_nvim_widget->open_file(path_str);
-        LOG_INFO("Opening file in nvim: {}", path_str);
     }
 }
 

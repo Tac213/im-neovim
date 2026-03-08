@@ -94,6 +94,39 @@ cmake --build build/claude -j$(nproc)
 - `terminal.h/cpp`: Terminal emulation using libvterm
 - `layer_libuv.h/cpp`: libuv integration for async operations
 - `globals.h/cpp`: Global state management
+- `signal.h`: Thread-safe Signal/Slot implementation for event-driven communication
+
+### Signal/Slot System (`signal.h`)
+
+The Signal class provides a type-safe, thread-safe implementation of the observer pattern for decoupled communication between components.
+
+**Key Features:**
+- **Type-safe**: Template-based with variadic arguments (`Signal<Args...>`)
+- **Thread-safe**: Uses mutex protection for connection/disconnection/emit operations
+- **Reentrant-safe**: Creates a copy of connections before iterating during `emit()` to handle callbacks that modify connections
+- **Connection management**: Returns connection IDs for explicit disconnection
+
+**Usage Pattern:**
+```cpp
+// Define a signal
+ImNeovim::Signal<int, const std::string&> on_file_opened;
+
+// Connect a slot
+uint64_t conn_id = on_file_opened.connect([](int id, const std::string& path) {
+    // handle file open event
+});
+
+// Emit the signal
+on_file_opened.emit(42, "/path/to/file");
+
+// Disconnect when no longer needed
+on_file_opened.disconnect(conn_id);
+```
+
+**Design Decisions:**
+- Connection IDs (uint64_t) are used instead of iterator-based handles for safer cross-thread invalidation
+- The `emit()` method creates a copy of the connection map to allow safe reentrant modifications
+- Empty/null callbacks are filtered during connection and skipped during emission
 
 ## Development Workflow
 

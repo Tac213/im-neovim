@@ -1,9 +1,8 @@
 #pragma once
 
+#include "im_neovim/signal.h"
 #include <filesystem>
-#include <functional>
 #include <imgui.h>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -23,15 +22,14 @@ class FileTreeWidget {
     void set_window_title(const std::string& title) { m_window_title = title; }
     bool is_visible() const { return m_is_visible; }
     void set_visible(bool visible) { m_is_visible = visible; }
-
-    void set_nvim_widget(std::shared_ptr<NvimWidget> nvim) {
-        m_nvim_widget = nvim;
-    }
     void set_current_directory(const std::filesystem::path& path);
 
     // Docking support
     void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }
     ImGuiID get_dock_id() const { return m_dock_id; }
+
+    // Signals
+    Signal<const std::string&> file_clicked;
 
   private:
     // Directory entry structure
@@ -59,7 +57,6 @@ class FileTreeWidget {
     // Event handlers
     void _on_item_clicked(const std::filesystem::path& path, bool is_directory);
     void _toggle_expand(DirectoryEntry& entry);
-    void _open_file_in_nvim(const std::filesystem::path& path);
 
     // Data
     std::filesystem::path m_current_dir;
@@ -77,9 +74,6 @@ class FileTreeWidget {
 
     // Docking state
     ImGuiID m_dock_id{0};
-
-    // Reference to NvimWidget for opening files
-    std::shared_ptr<NvimWidget> m_nvim_widget;
 };
 
 } // namespace ImNeovim

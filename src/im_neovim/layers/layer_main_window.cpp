@@ -6,7 +6,6 @@ LayerMainWindow::LayerMainWindow() {
     m_terminal = std::make_shared<Terminal>();
     m_nvim = std::make_shared<NvimWidget>();
     m_file_tree = std::make_shared<FileTreeWidget>();
-    m_file_tree->set_nvim_widget(m_nvim);
 
     // Create the dock layout manager
     m_dock_layout = std::make_shared<DockSpaceLayout>();
@@ -15,6 +14,16 @@ LayerMainWindow::LayerMainWindow() {
 void LayerMainWindow::on_attach() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigWindowsMoveFromTitleBarOnly = true;
+
+    // Connect signals.
+    if (m_file_tree && m_nvim) {
+        std::weak_ptr<NvimWidget> weak_nvim{m_nvim};
+        m_file_tree->file_clicked.connect([weak_nvim](const std::string& path) {
+            if (auto nvim = weak_nvim.lock()) {
+                nvim->open_file(path);
+            }
+        });
+    }
 }
 
 void LayerMainWindow::on_imgui_render() {

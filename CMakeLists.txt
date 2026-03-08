@@ -165,6 +165,7 @@ set(im_neovim_private_header_dir "${im_neovim_dir}/include")
 set(im_neovim_private_files
     "${im_neovim_private_header_dir}/im_neovim/logging.h"
     "${im_neovim_private_header_dir}/im_neovim/globals.h"
+    "${im_neovim_private_header_dir}/im_neovim/signal.h"
     "${im_neovim_private_header_dir}/im_neovim/gui/text_widget.h"
     "${im_neovim_private_header_dir}/im_neovim/gui/terminal.h"
     "${im_neovim_private_header_dir}/im_neovim/gui/nvim_widget.h"
