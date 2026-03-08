@@ -130,17 +130,6 @@ if(NOT TARGET nvim)
     else()
         set(LIB_NVIM_PATH "${NVIM_BINARY_DIR}/lib/libnvim.a")
     endif()
-
-    add_library(libnvim STATIC IMPORTED GLOBAL)
-    set_target_properties(libnvim PROPERTIES IMPORTED_LOCATION ${LIB_NVIM_PATH})
-    target_include_directories(libnvim
-        INTERFACE
-        "${NVIM_BINARY_DIR}/src/nvim/auto"
-        "${NVIM_BINARY_DIR}/include"
-        "${NVIM_BINARY_DIR}/cmake.config"
-        "${NVIM_SOURCE_DIR}/src"
-    )
-    add_dependencies(libnvim neovim)
 endif()
 
 if(NOT TARGET libuv)
