@@ -5,8 +5,6 @@
 #include "layers/layer_libuv.h"
 #include <im_app/application.h>
 #include <im_app/file_system.h>
-#include <im_app/layer.h>
-#include <imgui.h>
 #include <spdlog/sinks/daily_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
