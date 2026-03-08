@@ -29,6 +29,10 @@ class FileTreeWidget {
     }
     void set_current_directory(const std::filesystem::path& path);
 
+    // Docking support
+    void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }
+    ImGuiID get_dock_id() const { return m_dock_id; }
+
   private:
     // Directory entry structure
     struct DirectoryEntry {
@@ -70,6 +74,9 @@ class FileTreeWidget {
     bool m_is_visible{true};
     ImVec2 m_window_pos{50.0f, 50.0f};
     ImVec2 m_window_size{250.0f, 400.0f};
+
+    // Docking state
+    ImGuiID m_dock_id{0};
 
     // Reference to NvimWidget for opening files
     std::shared_ptr<NvimWidget> m_nvim_widget;

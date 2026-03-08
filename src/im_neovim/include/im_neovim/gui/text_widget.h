@@ -41,6 +41,10 @@ class TextWidget {
     bool is_embedded() const { return m_is_embedded; }
     void set_embedded(bool embedded) { m_is_embedded = embedded; }
 
+    // Docking support
+    void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }
+    ImGuiID get_dock_id() const { return m_dock_id; }
+
   protected:
     // Common window management
     bool setup_window();
@@ -67,6 +71,9 @@ class TextWidget {
     ImVec2 m_embedded_window_pos{100.0f, 100.0f};
     ImVec2 m_embedded_window_size{800.0f, 400.0f};
     bool m_embedded_window_collapsed{false};
+
+    // Docking state
+    ImGuiID m_dock_id{0};
 
     float m_last_font_size = 0;
 

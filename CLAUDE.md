@@ -10,36 +10,38 @@ ImNeovim is an ImGui-based graphical user interface for Neovim. It embeds Neovim
 ## Repository Structure
 
 ```
+
 ├── src/
-│   ├── im_app/              # Core application framework (cross-platform)
-│   │   ├── interfaces/      # Abstract interfaces for graphics, window, renderer
-│   │   ├── platforms/       # Platform-specific implementations
-│   │   │   ├── win32/       # Windows implementation
-│   │   │   ├── linux/       # Linux implementation (GLFW-based)
-│   │   │   └── darwin/      # macOS implementation
-│   │   └── application.cpp  # Main application logic
-│   └── im_neovim/           # Neovim integration
-│       ├── include/         # Private headers
-│       ├── gui/             # GUI widgets (text_widget, terminal, nvim_widget)
-│       ├── layers/          # Layer implementations (libuv)
-│       └── im_neovim_app.cpp # Main entry point for ImNeovim
+│ ├── im_app/ # Core application framework (cross-platform)
+│ │ ├── interfaces/ # Abstract interfaces for graphics, window, renderer
+│ │ ├── platforms/ # Platform-specific implementations
+│ │ │ ├── win32/ # Windows implementation
+│ │ │ ├── linux/ # Linux implementation (GLFW-based)
+│ │ │ └── darwin/ # macOS implementation
+│ │ └── application.cpp # Main application logic
+│ └── im_neovim/ # Neovim integration
+│ ├── include/ # Private headers
+│ ├── gui/ # GUI widgets (text_widget, terminal, nvim_widget)
+│ ├── layers/ # Layer implementations (libuv)
+│ └── im_neovim_app.cpp # Main entry point for ImNeovim
 ├── include/
-│   └── im_app/              # Public API headers
-├── thirdparty/              # Submodules and dependencies
-│   ├── imgui/               # ImGui library
-│   ├── glfw/                # GLFW window library (Linux/macOS)
-│   ├── glew/                # OpenGL extension loader
-│   ├── spdlog/              # Logging library
-│   ├── fmt/                 # Formatting library
-│   ├── libvterm/            # Terminal emulation library
-│   ├── libuv/               # Async I/O library
-│   ├── msgpack-c/           # MessagePack serialization
-│   └── DirectX-Headers/     # DirectX headers (Windows)
-├── build/                   # Build output directory
-│   └── claude/              # Claude-specific build directory (for tool operations)
-├── bin/                     # Binary tools
-└── CMakeLists.txt           # Root CMake configuration
-```
+│ └── im_app/ # Public API headers
+├── thirdparty/ # Submodules and dependencies
+│ ├── imgui/ # ImGui library
+│ ├── glfw/ # GLFW window library (Linux/macOS)
+│ ├── glew/ # OpenGL extension loader
+│ ├── spdlog/ # Logging library
+│ ├── fmt/ # Formatting library
+│ ├── libvterm/ # Terminal emulation library
+│ ├── libuv/ # Async I/O library
+│ ├── msgpack-c/ # MessagePack serialization
+│ └── DirectX-Headers/ # DirectX headers (Windows)
+├── build/ # Build output directory
+│ └── claude/ # Claude-specific build directory (for tool operations)
+├── bin/ # Binary tools
+└── CMakeLists.txt # Root CMake configuration
+
+````
 
 ## Build System
 
@@ -59,7 +61,7 @@ git submodule update --init --recursive
 rm -rf build/claude
 cmake -B build/claude -G "Visual Studio 17 2022" -A x64
 cmake --build build/claude --config Debug
-```
+````
 
 ### Building on Linux/macOS
 
@@ -94,6 +96,37 @@ cmake --build build/claude -j$(nproc)
 - `globals.h/cpp`: Global state management
 
 ## Development Workflow
+
+### Code Style
+
+This project uses strict code formatting and linting rules. All code must pass `clang-format` and `clang-tidy` checks.
+
+#### Formatting Rules (`.clang-format`)
+
+- **Base Style**: LLVM with customizations
+- **Indentation**: 4 spaces (no tabs)
+- **Pointer Alignment**: Left (`Type* ptr`, not `Type *ptr`)
+
+#### Naming Conventions (`.clang-tidy`)
+
+| Entity            | Convention                    | Example              |
+| ----------------- | ----------------------------- | -------------------- |
+| Classes           | `CamelCase`                   | `MyClass`            |
+| Structs           | `CamelCase`                   | `MyStruct`           |
+| Enums             | `CamelCase`                   | `MyEnum`             |
+| Local variables   | `lower_case`                  | `local_var`          |
+| Private members   | `lower_case` with `m_` prefix | `m_member_var`       |
+| Protected members | `lower_case` (no prefix)      | `protected_var`      |
+| Public members    | `lower_case` (no prefix)      | `public_var`         |
+| Static constants  | `lower_case` with `s_` prefix | `s_static_const`     |
+| Global constants  | `lower_case` with `g_` prefix | `g_global_const`     |
+| Methods           | `lower_case`                  | `my_method()`        |
+| Private methods   | `lower_case` with `_` prefix  | `_private_method()`  |
+| Protected methods | `lower_case` (no prefix)      | `protected_method()` |
+| Enum constants    | `CamelCase`                   | `EnumValue`          |
+| Parameters        | `lower_case`                  | `param_name`         |
+| Namespaces        | `CamelCase`                   | `MyNamespace`        |
+| Typedefs/Using    | `CamelCase`                   | `MyTypedef`          |
 
 ### Common Tasks
 
@@ -143,4 +176,7 @@ cmake --build build/claude -j$(nproc)
 - Uses Metal graphics backend
 - Cocoa window management
 - Objective-C++ implementation
+
+```
+
 ```

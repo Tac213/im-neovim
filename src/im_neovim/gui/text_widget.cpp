@@ -32,8 +32,16 @@ bool TextWidget::setup_window() {
     if (m_is_embedded) {
         return true;
     }
-    ImGui::SetNextWindowPos(m_embedded_window_pos, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(m_embedded_window_size, ImGuiCond_FirstUseEver);
+
+    // Set dock target if we have a dock ID
+    if (m_dock_id != 0) {
+        ImGui::SetNextWindowDockID(m_dock_id, ImGuiCond_FirstUseEver);
+    } else {
+        // Fallback to floating window with saved position/size
+        ImGui::SetNextWindowPos(m_embedded_window_pos, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(m_embedded_window_size,
+                                 ImGuiCond_FirstUseEver);
+    }
 
     // Ensure we never pass an empty window title to ImGui
     const char* window_title_ptr = m_window_title.c_str();

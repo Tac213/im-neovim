@@ -30,7 +30,9 @@ void FileTreeWidget::set_current_directory(const std::filesystem::path& path) {
     }
 }
 
-void FileTreeWidget::_scan_directory(DirectoryEntry& entry) {
+void FileTreeWidget::
+    _scan_directory( // NOLINT(readability-convert-member-functions-to-static)
+        DirectoryEntry& entry) {
     entry.children.clear();
 
     try {
@@ -208,11 +210,17 @@ void FileTreeWidget::render() {
         _refresh_current_directory();
     }
 
-    // Set up window
-    ImGui::SetNextWindowPos(m_window_pos, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(m_window_size, ImGuiCond_FirstUseEver);
-
+    // Set up window flags for docking
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoCollapse;
+
+    // Set dock target if we have a dock ID
+    if (m_dock_id != 0) {
+        ImGui::SetNextWindowDockID(m_dock_id, ImGuiCond_FirstUseEver);
+    } else {
+        // Fallback to floating window with saved position/size
+        ImGui::SetNextWindowPos(m_window_pos, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(m_window_size, ImGuiCond_FirstUseEver);
+    }
 
     if (ImGui::Begin(m_window_title.c_str(), &m_is_visible, window_flags)) {
         // Update window position and size for persistence

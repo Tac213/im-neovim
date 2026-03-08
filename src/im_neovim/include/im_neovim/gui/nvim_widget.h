@@ -24,6 +24,10 @@ class NvimWidget : public TextWidget,
     void render() override;
     void resize(uint32_t cols, uint32_t rows);
 
+    // Docking support
+    void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }
+    ImGuiID get_dock_id() const { return m_dock_id; }
+
     std::shared_ptr<NvimRequest> start_nvim_request(
         const std::string& method, uint8_t param_count,
         std::function<void(msgpack::object&)>&& on_result,

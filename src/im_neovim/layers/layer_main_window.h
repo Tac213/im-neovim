@@ -3,6 +3,7 @@
 #include "im_neovim/gui/terminal.h"
 #include "im_neovim/gui/nvim_widget.h"
 #include "im_neovim/gui/file_tree_widget.h"
+#include "im_neovim/gui/dock_space_layout.h"
 // clang-format on
 #include <im_app/layer.h>
 #include <memory>
@@ -19,5 +20,6 @@ class LayerMainWindow : public ImApp::Layer {
     std::shared_ptr<Terminal> m_terminal{nullptr};
     std::shared_ptr<NvimWidget> m_nvim{nullptr};
     std::shared_ptr<FileTreeWidget> m_file_tree{nullptr};
+    std::shared_ptr<DockSpaceLayout> m_dock_layout{nullptr};
 };
 } // namespace ImNeovim
