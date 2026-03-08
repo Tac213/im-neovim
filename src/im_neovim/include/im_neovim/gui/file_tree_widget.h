@@ -13,7 +13,7 @@ namespace ImNeovim {
 class NvimWidget;
 
 class FileTreeWidget {
-public:
+  public:
     FileTreeWidget();
     ~FileTreeWidget();
 
@@ -24,10 +24,12 @@ public:
     bool is_visible() const { return m_is_visible; }
     void set_visible(bool visible) { m_is_visible = visible; }
 
-    void set_nvim_widget(std::shared_ptr<NvimWidget> nvim) { m_nvim_widget = nvim; }
+    void set_nvim_widget(std::shared_ptr<NvimWidget> nvim) {
+        m_nvim_widget = nvim;
+    }
     void set_current_directory(const std::filesystem::path& path);
 
-private:
+  private:
     // Directory entry structure
     struct DirectoryEntry {
         std::filesystem::path path;

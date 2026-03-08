@@ -16,6 +16,7 @@ FileTreeWidget::FileTreeWidget()
 
 FileTreeWidget::~FileTreeWidget() {
     _stop_watching();
+    m_nvim_widget.reset();
 }
 
 void FileTreeWidget::set_current_directory(const std::filesystem::path& path) {
@@ -41,7 +42,8 @@ void FileTreeWidget::_scan_directory(DirectoryEntry& entry) {
         std::vector<DirectoryEntry> directories;
         std::vector<DirectoryEntry> files;
 
-        for (const auto& dir_entry : std::filesystem::directory_iterator(entry.path)) {
+        for (const auto& dir_entry :
+             std::filesystem::directory_iterator(entry.path)) {
             try {
                 DirectoryEntry child;
                 child.path = dir_entry.path();
@@ -60,7 +62,8 @@ void FileTreeWidget::_scan_directory(DirectoryEntry& entry) {
         }
 
         // Sort directories and files alphabetically by filename
-        auto compare_by_filename = [](const DirectoryEntry& a, const DirectoryEntry& b) {
+        auto compare_by_filename = [](const DirectoryEntry& a,
+                                      const DirectoryEntry& b) {
             return a.path.filename().string() < b.path.filename().string();
         };
 
@@ -69,13 +72,16 @@ void FileTreeWidget::_scan_directory(DirectoryEntry& entry) {
 
         // Add directories first, then files
         entry.children.reserve(directories.size() + files.size());
-        entry.children.insert(entry.children.end(), directories.begin(), directories.end());
+        entry.children.insert(entry.children.end(), directories.begin(),
+                              directories.end());
         entry.children.insert(entry.children.end(), files.begin(), files.end());
 
     } catch (const std::filesystem::filesystem_error& e) {
-        LOG_ERROR("Error scanning directory '{}': {}", entry.path.string(), e.what());
+        LOG_ERROR("Error scanning directory '{}': {}", entry.path.string(),
+                  e.what());
     } catch (const std::exception& e) {
-        LOG_ERROR("Unexpected error scanning directory '{}': {}", entry.path.string(), e.what());
+        LOG_ERROR("Unexpected error scanning directory '{}': {}",
+                  entry.path.string(), e.what());
     }
 }
 
@@ -90,9 +96,7 @@ void FileTreeWidget::_start_watching() {
     m_watch_handle = nullptr;
 }
 
-void FileTreeWidget::_stop_watching() {
-    m_watch_handle = nullptr;
-}
+void FileTreeWidget::_stop_watching() { m_watch_handle = nullptr; }
 
 void FileTreeWidget::_handle_file_system_changes() {
     // Check if directory has changed
@@ -163,9 +167,11 @@ void FileTreeWidget::_render_file_node(DirectoryEntry& entry, int depth) {
     }
 }
 
-void FileTreeWidget::_on_item_clicked(const std::filesystem::path& path, bool is_directory) {
+void FileTreeWidget::_on_item_clicked(const std::filesystem::path& path,
+                                      bool is_directory) {
     if (is_directory) {
-        _toggle_expand(m_root_entry); // This will be called from within _render_directory_node
+        _toggle_expand(m_root_entry); // This will be called from within
+                                      // _render_directory_node
     } else {
         _open_file_in_nvim(path);
     }
@@ -216,7 +222,8 @@ void FileTreeWidget::render() {
         // Render the file tree
         if (!std::filesystem::exists(m_current_dir)) {
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
-                               "Directory not accessible: %s", m_current_dir.string().c_str());
+                               "Directory not accessible: %s",
+                               m_current_dir.string().c_str());
         } else if (!m_root_entry.children.empty() || m_root_entry.is_expanded) {
             // Render children of root
             for (auto& child : m_root_entry.children) {

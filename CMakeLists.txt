@@ -177,6 +177,8 @@ set(im_neovim_private_files
     "${im_neovim_dir}/gui/file_tree_widget.cpp"
     "${im_neovim_dir}/layers/layer_libuv.h"
     "${im_neovim_dir}/layers/layer_libuv.cpp"
+    "${im_neovim_dir}/layers/layer_main_window.h"
+    "${im_neovim_dir}/layers/layer_main_window.cpp"
 )
 
 add_executable(im_neovim

@@ -1,7 +1,5 @@
 // clang-format off
-#include "im_neovim/gui/terminal.h"
-#include "im_neovim/gui/nvim_widget.h"
-#include "im_neovim/gui/file_tree_widget.h"
+#include "layers/layer_main_window.h"
 // clang-format on
 #include "im_neovim/logging.h"
 #include "layers/layer_libuv.h"
@@ -14,33 +12,6 @@
 #include <spdlog/spdlog.h>
 
 namespace ImNeovim {
-class MyLayer : public ImApp::Layer {
-  public:
-    MyLayer() {
-        m_terminal = std::make_shared<Terminal>();
-        m_nvim = std::make_shared<NvimWidget>();
-        m_file_tree = std::make_shared<FileTreeWidget>();
-        m_file_tree->set_nvim_widget(m_nvim);
-    }
-
-    void on_attach() override {
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigWindowsMoveFromTitleBarOnly = true;
-    }
-
-    void on_imgui_render() override {
-        ImGui::ShowDemoWindow();
-        m_terminal->render();
-        m_nvim->render();
-        m_file_tree->render();
-    }
-
-  private:
-    std::shared_ptr<Terminal> m_terminal{nullptr};
-    std::shared_ptr<NvimWidget> m_nvim{nullptr};
-    std::shared_ptr<FileTreeWidget> m_file_tree{nullptr};
-};
-
 static void initialize_logger() {
     auto stdout_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 #if defined(IM_NVIM_DEBUG)
@@ -84,7 +55,7 @@ Application* create_im_app(int argc, char** argv) {
     auto* app = new Application(app_spec);
     ImNeovim::initialize_logger();
     app->push_layer<ImNeovim::LayerLibuv>();
-    app->push_layer<ImNeovim::MyLayer>();
+    app->push_layer<ImNeovim::LayerMainWindow>();
     return app;
 }
 } // namespace ImApp
