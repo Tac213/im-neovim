@@ -49,4 +49,5 @@ __pycache__/
 
 imgui.ini
 
-.claude/
+# claude code local settings file
+.claude/settings.local.json
