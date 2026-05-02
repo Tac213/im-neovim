@@ -64,6 +64,32 @@ class NvimWidget : public TextWidget,
     void _redraw_option_set(msgpack::object_array& args);
     void _redraw_set_title(msgpack::object_array& args);
     void _redraw_default_colors_set(msgpack::object_array& args);
+    void _redraw_set_scroll_region(msgpack::object_array& args);
+    void _redraw_scroll(msgpack::object_array& args);
+    void _redraw_eol_clear(msgpack::object_array& args);
+    void _redraw_mode_info_set(msgpack::object_array& args);
+    void _redraw_mode_change(msgpack::object_array& args);
+    void _redraw_busy_start(msgpack::object_array& args);
+    void _redraw_busy_stop(msgpack::object_array& args);
+    void _redraw_mouse_on(msgpack::object_array& args);
+    void _redraw_mouse_off(msgpack::object_array& args);
+    void _redraw_bell(msgpack::object_array& args);
+    void _redraw_suspend(msgpack::object_array& args);
+    void _redraw_popupmenu_show(msgpack::object_array& args);
+    void _redraw_popupmenu_select(msgpack::object_array& args);
+    void _redraw_popupmenu_hide(msgpack::object_array& args);
+    void _render_popup_menu(ImDrawList* draw_list, const ImVec2& pos,
+                            float char_width, float line_height);
+
+    /* Multigrid redraw handlers */
+    void _redraw_grid_resize(msgpack::object_array& args);
+    void _redraw_grid_line(msgpack::object_array& args);
+    void _redraw_grid_clear(msgpack::object_array& args);
+    void _redraw_grid_cursor_goto(msgpack::object_array& args);
+    void _redraw_grid_scroll(msgpack::object_array& args);
+    void _redraw_grid_destroy(msgpack::object_array& args);
+    void _redraw_hl_attr_define(msgpack::object_array& args);
+    void _redraw_hl_group_set(msgpack::object_array& args);
 
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
@@ -102,16 +128,26 @@ class NvimWidget : public TextWidget,
         HighlightAttr();
     };
 
+    // Scroll region within a grid
+    struct ScrollRegion {
+        uint32_t top{0};
+        uint32_t bot{0};
+        uint32_t left{0};
+        uint32_t right{0};
+    };
+
     // Grid structure
     struct Grid {
         uint32_t id;
         uint32_t width;
         uint32_t height;
         std::vector<std::vector<ScreenCell>> cells;
+        ScrollRegion m_scroll_region;
 
         Grid();
         void clear();
         void resize(uint32_t w, uint32_t h);
+        void scroll_region(int count);
     };
 
     struct NvimState {
@@ -120,6 +156,31 @@ class NvimWidget : public TextWidget,
         uint32_t row{0};
         uint32_t col{0};
     } m_state;
+
+    // Cursor shape for different modes
+    enum class CursorShape {
+        Block,
+        Horizontal,
+        Vertical
+    };
+
+    // Mode info entry from mode_info_set
+    struct ModeInfoEntry {
+        std::string cursor_shape{"block"};
+        uint32_t cell_percentage{100};
+        uint32_t blinkwait{0};
+        uint32_t blinkon{0};
+        uint32_t blinkoff{0};
+        int attr_id{0};
+    };
+
+    // Popup menu entry (completion item)
+    struct PopupMenuEntry {
+        std::string text;
+        std::string kind;
+        std::string extra;
+        std::string info;
+    };
 
     // Grid and highlight state
     std::unordered_map<uint32_t, Grid> m_grids;
@@ -133,6 +194,39 @@ class NvimWidget : public TextWidget,
     ImVec2 m_window_size{800.0f, 400.0f};
     bool m_dark_mode{true};
     bool m_needs_render{true};
+
+    // Mode and cursor state
+    std::vector<ModeInfoEntry> m_mode_info;
+    bool m_cursor_style_enabled{false};
+    CursorShape m_cursor_shape{CursorShape::Block};
+    uint32_t m_cursor_cell_percentage{100};
+    uint32_t m_cursor_blinkwait{0};
+    uint32_t m_cursor_blinkon{0};
+    uint32_t m_cursor_blinkoff{0};
+    std::string m_current_mode_name;
+    bool m_busy{false};
+    double m_last_blink_time{0.0};
+    bool m_cursor_visible{true};
+
+    // Mouse, bell, and option state
+    bool m_mouse_enabled{true};
+    bool m_bell_pending{false};
+    double m_bell_timestamp{0.0};
+    std::string m_requested_font;
+    std::string m_requested_font_wide;
+    int32_t m_linespace{0};
+    bool m_suspend_pending{false};
+
+    // Popup menu state
+    std::vector<PopupMenuEntry> m_popup_items;
+    int32_t m_popup_selected{-1};
+    int32_t m_popup_anchor_row{0};
+    int32_t m_popup_anchor_col{0};
+    bool m_popup_visible{false};
+
+    // Multigrid protocol state
+    bool m_multigrid_enabled{false};
+    std::unordered_map<std::string, int> m_hl_group_map;
 
     uv_process_t m_nvim_proc;
     uv_pipe_t m_in_pipe;

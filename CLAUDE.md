@@ -54,25 +54,31 @@ ImNeovim is an ImGui-based graphical user interface for Neovim. It embeds Neovim
 ### Building on Windows
 
 ```bash
-# Initialize submodules
+# First time: initialize submodules and configure
 git submodule update --init --recursive
-
-# Build (using separate build/claude directory)
-rm -rf build/claude
 cmake -B build/claude -G "Visual Studio 17 2022" -A x64
-cmake --build build/claude --config Debug
+
+# Build im_neovim (skip neovim external project to save time)
+cmake --build build/claude --config Debug --target im_neovim
+
+# Re-configure only when CMakeLists.txt or dependencies change
+# Otherwise just rebuild:
+cmake --build build/claude --config Debug --target im_neovim
 ````
 
 ### Building on Linux/macOS
 
 ```bash
-# Initialize submodules
+# First time: initialize submodules and configure
 git submodule update --init --recursive
-
-# Build (using separate build/claude directory)
-rm -rf build/claude
 cmake -B build/claude -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/claude -j$(nproc)
+
+# Build im_neovim (skip neovim external project to save time)
+cmake --build build/claude -j$(nproc) --target im_neovim
+
+# Re-configure only when CMakeLists.txt or dependencies change
+# Otherwise just rebuild:
+cmake --build build/claude -j$(nproc) --target im_neovim
 ```
 
 ## Key Components

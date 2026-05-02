@@ -33,6 +33,55 @@ void NvimWidget::Grid::resize(uint32_t w, uint32_t h) {
     for (auto& row : cells) {
         row.resize(w);
     }
+    m_scroll_region.top = 0;
+    m_scroll_region.bot = h;
+    m_scroll_region.left = 0;
+    m_scroll_region.right = w;
+}
+
+void NvimWidget::Grid::scroll_region(int count) {
+    uint32_t top = m_scroll_region.top;
+    uint32_t bot = m_scroll_region.bot;
+    uint32_t left = m_scroll_region.left;
+    uint32_t right = m_scroll_region.right;
+
+    // Clamp to grid bounds
+    if (top >= height) top = 0;
+    if (bot > height) bot = height;
+    if (bot <= top) return;
+    if (left >= width) left = 0;
+    if (right > width) right = width;
+    if (right <= left) return;
+
+    if (count > 0) {
+        // Scroll up: shift rows [top+count, bot) to [top, bot-count)
+        for (uint32_t y = top; y + count < bot; y++) {
+            for (uint32_t x = left; x < right; x++) {
+                cells[y][x] = cells[y + count][x];
+            }
+        }
+        // Clear vacated rows at the bottom
+        for (uint32_t y = (bot > static_cast<uint32_t>(count) ? bot - count : top);
+             y < bot; y++) {
+            for (uint32_t x = left; x < right; x++) {
+                cells[y][x].clear();
+            }
+        }
+    } else if (count < 0) {
+        uint32_t abs_count = static_cast<uint32_t>(-count);
+        // Scroll down: shift rows [top, bot-abs_count) to [top+abs_count, bot)
+        for (uint32_t y = bot - 1; y >= top + abs_count && y < bot; y--) {
+            for (uint32_t x = left; x < right; x++) {
+                cells[y][x] = cells[y - abs_count][x];
+            }
+        }
+        // Clear vacated rows at the top
+        for (uint32_t y = top; y < top + abs_count && y < bot; y++) {
+            for (uint32_t x = left; x < right; x++) {
+                cells[y][x].clear();
+            }
+        }
+    }
 }
 
 NvimWidget::NvimWidget() {
@@ -122,6 +171,10 @@ void NvimWidget::render() {
         float line_height = ImGui::GetTextLineHeight();
 
         _render_grid(draw_list, pos, char_width, line_height);
+
+        if (m_popup_visible && !m_popup_items.empty()) {
+            _render_popup_menu(draw_list, pos, char_width, line_height);
+        }
     }
 
     // Only call End() if Begin() was actually called and succeeded
@@ -139,10 +192,13 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
 
     Grid& grid = it->second;
 
+    float effective_line_height = line_height + static_cast<float>(m_linespace);
+
     // Draw all cells
     for (uint32_t y = 0; y < grid.height; y++) {
         for (uint32_t x = 0; x < grid.width; x++) {
-            ImVec2 char_pos(pos.x + x * char_width, pos.y + y * line_height);
+            ImVec2 char_pos(pos.x + x * char_width,
+                            pos.y + y * effective_line_height);
             TextWidget::render_cell(draw_list, grid.cells[y][x], char_pos,
                                     char_width, line_height);
         }
@@ -150,45 +206,219 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
 
     // Draw cursor
     if (ImGui::IsWindowFocused() && m_nvim_attached) {
-        ImVec2 cursor_pos(pos.x + m_state.cursor_x * char_width,
-                          pos.y + m_state.cursor_y * line_height);
-        float alpha = (sin(ImGui::GetTime() * 3.14159f) * 0.3f) + 0.5f;
+        // Blink timing logic
+        bool show_cursor = true;
+        if (m_cursor_blinkon > 0 || m_cursor_blinkoff > 0) {
+            double now = ImGui::GetTime();
+            double elapsed_ms = (now - m_last_blink_time) * 1000.0;
 
-        ScreenCell cursor_cell;
-        if (m_state.cursor_y < grid.height && m_state.cursor_x < grid.width) {
-            cursor_cell = grid.cells[m_state.cursor_y][m_state.cursor_x];
+            if (elapsed_ms < static_cast<double>(m_cursor_blinkwait)) {
+                show_cursor = true;
+            } else {
+                double blink_elapsed =
+                    elapsed_ms - static_cast<double>(m_cursor_blinkwait);
+                uint32_t cycle =
+                    static_cast<uint32_t>(m_cursor_blinkon + m_cursor_blinkoff);
+                if (cycle == 0) {
+                    show_cursor = true;
+                } else {
+                    double cycle_pos =
+                        fmod(blink_elapsed, static_cast<double>(cycle));
+                    show_cursor =
+                        cycle_pos < static_cast<double>(m_cursor_blinkon);
+                }
+            }
         }
 
-        // Override cursor color with alpha
-        ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
-                            m_dark_mode ? 0.7f : 0.3f,
-                            m_dark_mode ? 0.7f : 0.3f, alpha};
+        if (show_cursor) {
+            ImVec2 cursor_pos(pos.x + m_state.cursor_x * char_width,
+                              pos.y + m_state.cursor_y * effective_line_height);
 
-        if (cursor_cell.chars[0] != '\0') {
-            // Draw cursor background
-            draw_list->AddRectFilled(
-                cursor_pos,
-                ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
-                ImGui::ColorConvertFloat4ToU32(cursor_color));
+            // Cursor rect based on shape and cell percentage
+            ImVec2 cursor_min = cursor_pos;
+            ImVec2 cursor_max(cursor_pos.x + char_width,
+                              cursor_pos.y + line_height);
 
-            // Draw the character
-            char text[TextWidget::g_utf_size] = {0};
-            size_t len = 0;
-            for (int i = 0; i < cursor_cell.width && i < 4; i++) {
-                len +=
-                    TextWidget::utf8_encode(cursor_cell.chars[i], &text[len]);
+            float pct = static_cast<float>(m_cursor_cell_percentage) / 100.0f;
+            switch (m_cursor_shape) {
+            case CursorShape::Horizontal:
+                cursor_min.y =
+                    cursor_pos.y + line_height * (1.0f - pct);
+                break;
+            case CursorShape::Vertical:
+                cursor_max.x = cursor_pos.x + char_width * pct;
+                break;
+            case CursorShape::Block:
+                // Full cell, no adjustment needed
+                break;
             }
-            draw_list->AddText(cursor_pos,
-                               ImGui::ColorConvertFloat4ToU32(cursor_cell.fg),
-                               text);
-        } else {
-            // Just draw cursor
-            draw_list->AddRectFilled(
-                cursor_pos,
-                ImVec2(cursor_pos.x + char_width, cursor_pos.y + line_height),
-                ImGui::ColorConvertFloat4ToU32(cursor_color));
+
+            ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
+                                m_dark_mode ? 0.7f : 0.3f,
+                                m_dark_mode ? 0.7f : 0.3f, 0.8f};
+            // Dim cursor when busy
+            if (m_busy) {
+                cursor_color.w = 0.4f;
+            }
+
+            ScreenCell cursor_cell;
+            if (m_state.cursor_y < grid.height &&
+                m_state.cursor_x < grid.width) {
+                cursor_cell = grid.cells[m_state.cursor_y][m_state.cursor_x];
+            }
+
+            if (cursor_cell.chars[0] != '\0') {
+                draw_list->AddRectFilled(
+                    cursor_min, cursor_max,
+                    ImGui::ColorConvertFloat4ToU32(cursor_color));
+
+                char text[TextWidget::g_utf_size] = {0};
+                size_t len = 0;
+                for (int i = 0; i < cursor_cell.width && i < 4; i++) {
+                    len += TextWidget::utf8_encode(cursor_cell.chars[i],
+                                                   &text[len]);
+                }
+                draw_list->AddText(
+                    cursor_pos,
+                    ImGui::ColorConvertFloat4ToU32(cursor_cell.fg), text);
+            } else {
+                draw_list->AddRectFilled(
+                    cursor_min, cursor_max,
+                    ImGui::ColorConvertFloat4ToU32(cursor_color));
+            }
         }
     }
+
+    // Mode indicator overlay
+    if (!m_current_mode_name.empty()) {
+        std::string mode_text = "-- " + m_current_mode_name + " --";
+        // Capitalize first letter
+        if (!mode_text.empty() && mode_text[3] >= 'a' && mode_text[3] <= 'z') {
+            mode_text[3] = static_cast<char>(mode_text[3] - 'a' + 'A');
+        }
+
+        float text_width =
+            ImGui::CalcTextSize(mode_text.c_str()).x;
+        ImVec2 mode_pos(pos.x + (grid.width * char_width - text_width) * 0.5f,
+                        pos.y + grid.height * effective_line_height -
+                            effective_line_height);
+
+        ImU32 mode_color =
+            ImGui::ColorConvertFloat4ToU32(ImVec4(0.7f, 0.7f, 0.7f, 0.6f));
+        draw_list->AddText(mode_pos, mode_color, mode_text.c_str());
+    }
+
+    // Visual bell flash (200ms semi-transparent overlay)
+    if (m_bell_pending) {
+        double elapsed = ImGui::GetTime() - m_bell_timestamp;
+        if (elapsed < 0.2) {
+            float alpha = 0.15f * (1.0f - static_cast<float>(elapsed / 0.2));
+            ImVec2 grid_end(pos.x + grid.width * char_width,
+                            pos.y + grid.height * effective_line_height);
+            draw_list->AddRectFilled(
+                pos, grid_end,
+                ImGui::ColorConvertFloat4ToU32(
+                    ImVec4(1.0f, 1.0f, 1.0f, alpha)));
+        } else {
+            m_bell_pending = false;
+        }
+    }
+}
+
+void NvimWidget::_render_popup_menu(ImDrawList* draw_list, const ImVec2& pos,
+                                   float char_width, float line_height) {
+    float effective_line_height =
+        line_height + static_cast<float>(m_linespace);
+
+    // Position popup below the anchor row
+    float menu_x = pos.x + m_popup_anchor_col * char_width;
+    float menu_y =
+        pos.y + (m_popup_anchor_row + 1) * effective_line_height;
+
+    // Build display strings and measure widest item
+    std::vector<std::string> display_strings;
+    display_strings.reserve(m_popup_items.size());
+    float max_width = 100.0f; // minimum width
+
+    for (const auto& item : m_popup_items) {
+        std::string display = item.text;
+        if (!item.kind.empty()) {
+            display += " [" + item.kind + "]";
+        }
+        display_strings.push_back(display);
+
+        float w = ImGui::CalcTextSize(display.c_str()).x;
+        if (w > max_width) {
+            max_width = w;
+        }
+    }
+
+    // Add padding
+    float menu_width = max_width + ImGui::GetStyle().WindowPadding.x * 2.0f;
+    float menu_height = static_cast<float>(m_popup_items.size()) *
+                            effective_line_height +
+                        ImGui::GetStyle().WindowPadding.y * 2.0f;
+
+    // Constrain to grid bounds
+    auto it = m_grids.find(m_current_grid);
+    if (it != m_grids.end()) {
+        float grid_right = pos.x + it->second.width * char_width;
+        if (menu_x + menu_width > grid_right) {
+            menu_x = grid_right - menu_width;
+        }
+        if (menu_x < pos.x) {
+            menu_x = pos.x;
+            menu_width = std::min(menu_width, grid_right - pos.x);
+        }
+
+        float grid_bottom = pos.y + it->second.height * effective_line_height;
+        if (menu_y + menu_height > grid_bottom) {
+            menu_y =
+                pos.y + m_popup_anchor_row * effective_line_height - menu_height;
+            if (menu_y < pos.y) {
+                menu_y = pos.y;
+                menu_height =
+                    std::min(menu_height, grid_bottom - pos.y);
+            }
+        }
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(menu_x, menu_y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(menu_width, menu_height),
+                             ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing;
+
+    // Use a unique ID so multiple popups don't conflict
+    if (ImGui::Begin("##popup_menu", nullptr, flags)) {
+        ImDrawList* popup_draw = ImGui::GetWindowDrawList();
+        ImVec2 popup_pos = ImGui::GetCursorScreenPos();
+
+        for (size_t i = 0; i < m_popup_items.size(); i++) {
+            ImVec2 item_pos(popup_pos.x,
+                            popup_pos.y + i * effective_line_height);
+
+            // Highlight selected item
+            if (static_cast<int32_t>(i) == m_popup_selected) {
+                popup_draw->AddRectFilled(
+                    item_pos,
+                    ImVec2(item_pos.x + menu_width,
+                           item_pos.y + effective_line_height),
+                    ImGui::ColorConvertFloat4ToU32(
+                        ImVec4(0.3f, 0.5f, 0.8f, 0.6f)));
+            }
+
+            ImU32 text_color =
+                ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            popup_draw->AddText(
+                ImVec2(item_pos.x + 4.0f, item_pos.y), text_color,
+                display_strings[i].c_str());
+        }
+    }
+    ImGui::End();
 }
 
 void NvimWidget::resize(uint32_t cols, uint32_t rows) {
@@ -379,13 +609,19 @@ void NvimWidget::_initialize() {
         nullptr);
     req->arg_uint32(m_state.col);
     req->arg_uint32(m_state.row);
-    req->arg_map(1);
+    req->arg_map(2);
     {
         std::string rgb_key{"rgb"};
         req->arg_str(rgb_key.size());
         req->arg_str_body(rgb_key.c_str(), rgb_key.size());
         req->arg_true();
+
+        std::string multigrid_key{"ext_multigrid"};
+        req->arg_str(multigrid_key.size());
+        req->arg_str_body(multigrid_key.c_str(), multigrid_key.size());
+        req->arg_true();
     }
+    m_multigrid_enabled = true;
 }
 
 void NvimWidget::_set_nvim_attached(bool attached) {
@@ -450,8 +686,14 @@ void NvimWidget::_handle_nvim_redraw(const char* operation,
         _redraw_cursor_goto(args);
     } else if (strcmp(operation, "put") == 0) {
         _redraw_put(args);
+    } else if (strcmp(operation, "scroll") == 0) {
+        _redraw_scroll(args);
+    } else if (strcmp(operation, "set_scroll_region") == 0) {
+        _redraw_set_scroll_region(args);
     } else if (strcmp(operation, "highlight_set") == 0) {
         _redraw_highlight_set(args);
+    } else if (strcmp(operation, "eol_clear") == 0) {
+        _redraw_eol_clear(args);
     } else if (strcmp(operation, "flush") == 0) {
         _redraw_flush(args);
     } else if (strcmp(operation, "option_set") == 0) {
@@ -460,6 +702,44 @@ void NvimWidget::_handle_nvim_redraw(const char* operation,
         _redraw_set_title(args);
     } else if (strcmp(operation, "default_colors_set") == 0) {
         _redraw_default_colors_set(args);
+    } else if (strcmp(operation, "mode_info_set") == 0) {
+        _redraw_mode_info_set(args);
+    } else if (strcmp(operation, "mode_change") == 0) {
+        _redraw_mode_change(args);
+    } else if (strcmp(operation, "busy_start") == 0) {
+        _redraw_busy_start(args);
+    } else if (strcmp(operation, "busy_stop") == 0) {
+        _redraw_busy_stop(args);
+    } else if (strcmp(operation, "mouse_on") == 0) {
+        _redraw_mouse_on(args);
+    } else if (strcmp(operation, "mouse_off") == 0) {
+        _redraw_mouse_off(args);
+    } else if (strcmp(operation, "bell") == 0) {
+        _redraw_bell(args);
+    } else if (strcmp(operation, "suspend") == 0) {
+        _redraw_suspend(args);
+    } else if (strcmp(operation, "popupmenu_show") == 0) {
+        _redraw_popupmenu_show(args);
+    } else if (strcmp(operation, "popupmenu_select") == 0) {
+        _redraw_popupmenu_select(args);
+    } else if (strcmp(operation, "popupmenu_hide") == 0) {
+        _redraw_popupmenu_hide(args);
+    } else if (strcmp(operation, "grid_resize") == 0) {
+        _redraw_grid_resize(args);
+    } else if (strcmp(operation, "grid_line") == 0) {
+        _redraw_grid_line(args);
+    } else if (strcmp(operation, "grid_clear") == 0) {
+        _redraw_grid_clear(args);
+    } else if (strcmp(operation, "grid_cursor_goto") == 0) {
+        _redraw_grid_cursor_goto(args);
+    } else if (strcmp(operation, "grid_scroll") == 0) {
+        _redraw_grid_scroll(args);
+    } else if (strcmp(operation, "grid_destroy") == 0) {
+        _redraw_grid_destroy(args);
+    } else if (strcmp(operation, "hl_attr_define") == 0) {
+        _redraw_hl_attr_define(args);
+    } else if (strcmp(operation, "hl_group_set") == 0) {
+        _redraw_hl_group_set(args);
     } else {
         // LOG_DEBUG("Unhandled redraw operation: {}", operation);
     }
@@ -731,6 +1011,27 @@ void NvimWidget::_redraw_option_set(msgpack::object_array& args) {
     }
 
     std::string option = args.ptr[option_name_idx].as<std::string>();
+    auto& val = args.ptr[option_name_idx + 1];
+
+    if (option == "guifont") {
+        if (val.type == msgpack::type::STR) {
+            m_requested_font = val.as<std::string>();
+            LOG_DEBUG("guifont requested: {} (font reload deferred)",
+                      m_requested_font);
+        }
+    } else if (option == "guifontwide") {
+        if (val.type == msgpack::type::STR) {
+            m_requested_font_wide = val.as<std::string>();
+            LOG_DEBUG("guifontwide requested: {} (deferred)",
+                      m_requested_font_wide);
+        }
+    } else if (option == "linespace") {
+        if (val.type == msgpack::type::POSITIVE_INTEGER) {
+            m_linespace = static_cast<int32_t>(val.as<uint32_t>());
+        } else if (val.type == msgpack::type::NEGATIVE_INTEGER) {
+            m_linespace = val.as<int32_t>();
+        }
+    }
 }
 
 void NvimWidget::_redraw_set_title(msgpack::object_array& args) {
@@ -807,6 +1108,613 @@ void NvimWidget::_redraw_default_colors_set(msgpack::object_array& args) {
     }
 }
 
+void NvimWidget::_redraw_set_scroll_region(msgpack::object_array& args) {
+    if (args.size < 4) {
+        LOG_WARN("set_scroll_region: expected 4 arguments, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[2].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[3].type != msgpack::type::POSITIVE_INTEGER) {
+        LOG_WARN("set_scroll_region: arguments must be positive integers");
+        return;
+    }
+
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    it->second.m_scroll_region.top = args.ptr[0].as<uint32_t>();
+    it->second.m_scroll_region.bot = args.ptr[1].as<uint32_t>();
+    it->second.m_scroll_region.left = args.ptr[2].as<uint32_t>();
+    it->second.m_scroll_region.right = args.ptr[3].as<uint32_t>();
+}
+
+void NvimWidget::_redraw_scroll(msgpack::object_array& args) {
+    if (args.size < 1) {
+        LOG_WARN("scroll: expected at least 1 argument, got {}", args.size);
+        return;
+    }
+
+    int64_t count = 0;
+    if (args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        count = static_cast<int64_t>(args.ptr[0].as<uint64_t>());
+    } else if (args.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+        count = args.ptr[0].as<int64_t>();
+    } else {
+        LOG_WARN("scroll: argument must be an integer");
+        return;
+    }
+
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    it->second.scroll_region(static_cast<int>(count));
+}
+
+void NvimWidget::_redraw_eol_clear(msgpack::object_array& /*args*/) {
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    Grid& grid = it->second;
+    if (m_state.cursor_y >= grid.height) {
+        return;
+    }
+
+    for (uint32_t x = m_state.cursor_x; x < grid.width; x++) {
+        grid.cells[m_state.cursor_y][x].clear();
+    }
+}
+
+void NvimWidget::_redraw_mode_info_set(msgpack::object_array& args) {
+    if (args.size < 2) {
+        LOG_WARN("mode_info_set: expected at least 2 arguments, got {}",
+                 args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::BOOLEAN) {
+        LOG_WARN("mode_info_set: first argument must be a boolean");
+        return;
+    }
+
+    m_cursor_style_enabled = args.ptr[0].as<bool>();
+
+    if (args.ptr[1].type != msgpack::type::ARRAY) {
+        LOG_WARN("mode_info_set: second argument must be an array");
+        return;
+    }
+
+    msgpack::object_array& mode_list = args.ptr[1].via.array;
+    m_mode_info.clear();
+    m_mode_info.reserve(mode_list.size);
+
+    for (size_t i = 0; i < mode_list.size; i++) {
+        if (mode_list.ptr[i].type != msgpack::type::MAP) {
+            continue;
+        }
+
+        ModeInfoEntry entry;
+        msgpack::object_map& props = mode_list.ptr[i].via.map;
+
+        for (size_t j = 0; j < props.size; j++) {
+            if (props.ptr[j].key.type != msgpack::type::STR) {
+                continue;
+            }
+            std::string key = props.ptr[j].key.as<std::string>();
+            auto& val = props.ptr[j].val;
+
+            if (key == "cursor_shape" && val.type == msgpack::type::STR) {
+                entry.cursor_shape = val.as<std::string>();
+            } else if (key == "cell_percentage" &&
+                       val.type == msgpack::type::POSITIVE_INTEGER) {
+                entry.cell_percentage = val.as<uint32_t>();
+            } else if (key == "blinkwait" &&
+                       val.type == msgpack::type::POSITIVE_INTEGER) {
+                entry.blinkwait = val.as<uint32_t>();
+            } else if (key == "blinkon" &&
+                       val.type == msgpack::type::POSITIVE_INTEGER) {
+                entry.blinkon = val.as<uint32_t>();
+            } else if (key == "blinkoff" &&
+                       val.type == msgpack::type::POSITIVE_INTEGER) {
+                entry.blinkoff = val.as<uint32_t>();
+            } else if (key == "attr_id" &&
+                       val.type == msgpack::type::POSITIVE_INTEGER) {
+                entry.attr_id = val.as<int>();
+            }
+        }
+
+        m_mode_info.push_back(entry);
+    }
+}
+
+void NvimWidget::_redraw_mode_change(msgpack::object_array& args) {
+    if (args.size < 2) {
+        LOG_WARN("mode_change: expected at least 2 arguments, got {}",
+                 args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::STR) {
+        LOG_WARN("mode_change: mode name must be a string");
+        return;
+    }
+    if (args.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+        LOG_WARN("mode_change: mode index must be a positive integer");
+        return;
+    }
+
+    m_current_mode_name = args.ptr[0].as<std::string>();
+    uint64_t mode_index = args.ptr[1].as<uint64_t>();
+
+    if (!m_cursor_style_enabled || m_mode_info.empty()) {
+        // Hardcoded defaults when cursor style is disabled
+        if (m_current_mode_name == "insert") {
+            m_cursor_shape = CursorShape::Vertical;
+            m_cursor_cell_percentage = 25;
+        } else if (m_current_mode_name == "replace") {
+            m_cursor_shape = CursorShape::Horizontal;
+            m_cursor_cell_percentage = 20;
+        } else {
+            m_cursor_shape = CursorShape::Block;
+            m_cursor_cell_percentage = 100;
+        }
+        m_cursor_blinkwait = 0;
+        m_cursor_blinkon = 0;
+        m_cursor_blinkoff = 0;
+        m_cursor_visible = true;
+    } else {
+        if (mode_index >= m_mode_info.size()) {
+            return;
+        }
+
+        const ModeInfoEntry& info = m_mode_info[static_cast<size_t>(mode_index)];
+
+        if (info.cursor_shape == "block") {
+            m_cursor_shape = CursorShape::Block;
+        } else if (info.cursor_shape == "horizontal") {
+            m_cursor_shape = CursorShape::Horizontal;
+        } else if (info.cursor_shape == "vertical") {
+            m_cursor_shape = CursorShape::Vertical;
+        } else {
+            m_cursor_shape = CursorShape::Block;
+        }
+
+        uint32_t percentage = info.cell_percentage;
+        if (percentage == 0 || percentage > 100) {
+            percentage = 100;
+        }
+        m_cursor_cell_percentage = percentage;
+
+        m_cursor_blinkwait = info.blinkwait;
+        m_cursor_blinkon = info.blinkon;
+        m_cursor_blinkoff = info.blinkoff;
+
+        m_cursor_visible = true;
+    }
+
+    m_last_blink_time = static_cast<double>(ImGui::GetTime());
+}
+
+void NvimWidget::_redraw_busy_start(msgpack::object_array& /*args*/) {
+    m_busy = true;
+}
+
+void NvimWidget::_redraw_busy_stop(msgpack::object_array& /*args*/) {
+    m_busy = false;
+}
+
+void NvimWidget::_redraw_mouse_on(msgpack::object_array& /*args*/) {
+    m_mouse_enabled = true;
+}
+
+void NvimWidget::_redraw_mouse_off(msgpack::object_array& /*args*/) {
+    m_mouse_enabled = false;
+}
+
+void NvimWidget::_redraw_bell(msgpack::object_array& /*args*/) {
+    m_bell_pending = true;
+    m_bell_timestamp = ImGui::GetTime();
+}
+
+void NvimWidget::_redraw_suspend(msgpack::object_array& /*args*/) {
+    m_suspend_pending = true;
+    LOG_DEBUG("suspend requested (window minimize deferred)");
+}
+
+void NvimWidget::_redraw_popupmenu_show(msgpack::object_array& args) {
+    if (args.size < 4) {
+        LOG_WARN("popupmenu_show: expected at least 4 arguments, got {}",
+                 args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::ARRAY) {
+        LOG_WARN("popupmenu_show: first argument must be an array");
+        return;
+    }
+
+    // Parse items: array of [text, kind, extra, info]
+    msgpack::object_array& items = args.ptr[0].via.array;
+    m_popup_items.clear();
+    m_popup_items.reserve(items.size);
+
+    for (size_t i = 0; i < items.size; i++) {
+        if (items.ptr[i].type != msgpack::type::ARRAY) {
+            m_popup_items.push_back({});
+            continue;
+        }
+
+        msgpack::object_array& item = items.ptr[i].via.array;
+        PopupMenuEntry entry;
+
+        if (item.size >= 1 && item.ptr[0].type == msgpack::type::STR) {
+            entry.text = item.ptr[0].as<std::string>();
+        }
+        if (item.size >= 2 && item.ptr[1].type == msgpack::type::STR) {
+            entry.kind = item.ptr[1].as<std::string>();
+        }
+        if (item.size >= 3 && item.ptr[2].type == msgpack::type::STR) {
+            entry.extra = item.ptr[2].as<std::string>();
+        }
+        if (item.size >= 4 && item.ptr[3].type == msgpack::type::STR) {
+            entry.info = item.ptr[3].as<std::string>();
+        }
+
+        m_popup_items.push_back(std::move(entry));
+    }
+
+    // Parse selected index
+    if (args.ptr[1].type == msgpack::type::POSITIVE_INTEGER) {
+        m_popup_selected = static_cast<int32_t>(args.ptr[1].as<uint32_t>());
+    } else if (args.ptr[1].type == msgpack::type::NEGATIVE_INTEGER) {
+        m_popup_selected = args.ptr[1].as<int32_t>();
+    }
+
+    // Parse anchor row
+    if (args.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+        m_popup_anchor_row = static_cast<int32_t>(args.ptr[2].as<uint32_t>());
+    }
+
+    // Parse anchor col
+    if (args.ptr[3].type == msgpack::type::POSITIVE_INTEGER) {
+        m_popup_anchor_col = static_cast<int32_t>(args.ptr[3].as<uint32_t>());
+    }
+
+    m_popup_visible = true;
+}
+
+void NvimWidget::_redraw_popupmenu_select(msgpack::object_array& args) {
+    if (args.size < 1) {
+        LOG_WARN("popupmenu_select: expected at least 1 argument, got {}",
+                 args.size);
+        return;
+    }
+
+    if (args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        m_popup_selected = static_cast<int32_t>(args.ptr[0].as<uint32_t>());
+    } else if (args.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+        m_popup_selected = args.ptr[0].as<int32_t>();
+    }
+}
+
+void NvimWidget::_redraw_popupmenu_hide(msgpack::object_array& /*args*/) {
+    m_popup_visible = false;
+    m_popup_items.clear();
+    m_popup_selected = -1;
+}
+
+void NvimWidget::_redraw_grid_resize(msgpack::object_array& args) {
+    if (args.size < 3) {
+        LOG_WARN("grid_resize: expected 3 arguments, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[2].type != msgpack::type::POSITIVE_INTEGER) {
+        LOG_WARN("grid_resize: invalid argument types");
+        return;
+    }
+
+    uint32_t grid_id = args.ptr[0].as<uint32_t>();
+    uint32_t width = args.ptr[1].as<uint32_t>();
+    uint32_t height = args.ptr[2].as<uint32_t>();
+
+    auto it = m_grids.find(grid_id);
+    if (it == m_grids.end()) {
+        Grid new_grid;
+        new_grid.id = grid_id;
+        new_grid.resize(width, height);
+        m_grids[grid_id] = std::move(new_grid);
+    } else {
+        it->second.resize(width, height);
+    }
+
+    if (grid_id == m_current_grid) {
+        m_state.col = width;
+        m_state.row = height;
+    }
+}
+
+void NvimWidget::_redraw_grid_line(msgpack::object_array& args) {
+    if (args.size < 4) {
+        LOG_WARN("grid_line: expected at least 4 arguments, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[2].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[3].type != msgpack::type::ARRAY) {
+        LOG_WARN("grid_line: invalid argument types");
+        return;
+    }
+
+    uint32_t grid_id = args.ptr[0].as<uint32_t>();
+    uint32_t row = args.ptr[1].as<uint32_t>();
+    uint32_t col_start = args.ptr[2].as<uint32_t>();
+    msgpack::object_array& cells = args.ptr[3].via.array;
+
+    auto it = m_grids.find(grid_id);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    Grid& grid = it->second;
+    if (row >= grid.height) {
+        return;
+    }
+
+    uint32_t col = col_start;
+    // Track last hl_id for stateful highlighting (0 = use last)
+    int last_hl_id = 0;
+
+    for (size_t i = 0; i < cells.size; i++) {
+        if (cells.ptr[i].type != msgpack::type::ARRAY) {
+            continue;
+        }
+
+        msgpack::object_array& cell = cells.ptr[i].via.array;
+        if (cell.size < 1 || cell.ptr[0].type != msgpack::type::STR) {
+            continue;
+        }
+
+        std::string text = cell.ptr[0].as<std::string>();
+
+        // Optional hl_id
+        int hl_id = last_hl_id;
+        if (cell.size >= 2 &&
+            cell.ptr[1].type == msgpack::type::POSITIVE_INTEGER) {
+            hl_id = static_cast<int>(cell.ptr[1].as<uint32_t>());
+            if (hl_id != 0) {
+                last_hl_id = hl_id;
+            } else {
+                hl_id = last_hl_id;
+            }
+        }
+
+        // Optional repeat count
+        uint32_t repeat = 1;
+        if (cell.size >= 3 &&
+            cell.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+            repeat = cell.ptr[2].as<uint32_t>();
+        }
+
+        // Look up highlight attributes
+        HighlightAttr hl = m_current_hl;
+        if (hl_id != 0) {
+            auto hl_it = m_hl_attrs.find(hl_id);
+            if (hl_it != m_hl_attrs.end()) {
+                hl = hl_it->second;
+            }
+        }
+
+        for (uint32_t r = 0; r < repeat && col < grid.width; r++) {
+            if (col >= grid.width) break;
+
+            ScreenCell& screen_cell = grid.cells[row][col];
+
+            // Decode UTF-8 text
+            screen_cell.clear();
+            const char* ptr = text.c_str();
+            size_t remaining = text.length();
+            size_t offset = 0;
+            int char_count = 0;
+
+            while (remaining > 0 && char_count < 4) {
+                uint32_t rune;
+                size_t decoded =
+                    TextWidget::utf8_decode(ptr + offset, &rune, remaining);
+                if (decoded == 0) break;
+                screen_cell.chars[char_count++] = rune;
+                offset += decoded;
+                remaining -= decoded;
+            }
+
+            screen_cell.width = std::max(1, char_count);
+            screen_cell.fg = hl.fg;
+            screen_cell.bg = hl.bg;
+            screen_cell.bold = hl.bold;
+            screen_cell.italic = hl.italic;
+            screen_cell.underline = hl.underline;
+            screen_cell.undercurl = hl.undercurl;
+            screen_cell.reverse = hl.reverse;
+
+            col++;
+        }
+    }
+}
+
+void NvimWidget::_redraw_grid_clear(msgpack::object_array& args) {
+    uint32_t grid_id = m_current_grid;
+    if (args.size >= 1 &&
+        args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        grid_id = args.ptr[0].as<uint32_t>();
+    }
+
+    auto it = m_grids.find(grid_id);
+    if (it != m_grids.end()) {
+        it->second.clear();
+    }
+}
+
+void NvimWidget::_redraw_grid_cursor_goto(msgpack::object_array& args) {
+    if (args.size < 3) {
+        LOG_WARN("grid_cursor_goto: expected 3 arguments, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[2].type != msgpack::type::POSITIVE_INTEGER) {
+        LOG_WARN("grid_cursor_goto: invalid argument types");
+        return;
+    }
+
+    m_current_grid = args.ptr[0].as<uint32_t>();
+    m_state.cursor_y = args.ptr[1].as<uint32_t>();
+    m_state.cursor_x = args.ptr[2].as<uint32_t>();
+}
+
+void NvimWidget::_redraw_grid_scroll(msgpack::object_array& args) {
+    if (args.size < 7) {
+        LOG_WARN("grid_scroll: expected 7 arguments, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[2].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[3].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[4].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[5].type != msgpack::type::POSITIVE_INTEGER ||
+        (args.ptr[6].type != msgpack::type::POSITIVE_INTEGER &&
+         args.ptr[6].type != msgpack::type::NEGATIVE_INTEGER)) {
+        LOG_WARN("grid_scroll: invalid argument types");
+        return;
+    }
+
+    uint32_t grid_id = args.ptr[0].as<uint32_t>();
+    auto it = m_grids.find(grid_id);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    it->second.m_scroll_region.top = args.ptr[1].as<uint32_t>();
+    it->second.m_scroll_region.bot = args.ptr[2].as<uint32_t>();
+    it->second.m_scroll_region.left = args.ptr[3].as<uint32_t>();
+    it->second.m_scroll_region.right = args.ptr[4].as<uint32_t>();
+
+    int64_t rows = 0;
+    if (args.ptr[5].type == msgpack::type::POSITIVE_INTEGER) {
+        rows = static_cast<int64_t>(args.ptr[5].as<uint64_t>());
+    } else {
+        rows = args.ptr[5].as<int64_t>();
+    }
+
+    it->second.scroll_region(static_cast<int>(rows));
+}
+
+void NvimWidget::_redraw_grid_destroy(msgpack::object_array& args) {
+    if (args.size < 1) {
+        LOG_WARN("grid_destroy: expected 1 argument, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER) {
+        LOG_WARN("grid_destroy: argument must be a positive integer");
+        return;
+    }
+
+    uint32_t grid_id = args.ptr[0].as<uint32_t>();
+    m_grids.erase(grid_id);
+
+    // If we destroyed the current grid, switch to grid 1
+    if (grid_id == m_current_grid && grid_id != 1) {
+        m_current_grid = 1;
+    }
+}
+
+void NvimWidget::_redraw_hl_attr_define(msgpack::object_array& args) {
+    if (args.size < 2) {
+        LOG_WARN("hl_attr_define: expected at least 2 arguments, got {}",
+                 args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::POSITIVE_INTEGER ||
+        args.ptr[1].type != msgpack::type::MAP) {
+        LOG_WARN("hl_attr_define: invalid argument types");
+        return;
+    }
+
+    int hl_id = static_cast<int>(args.ptr[0].as<uint32_t>());
+    msgpack::object_map& attr_map = args.ptr[1].via.map;
+
+    // Start from defaults
+    HighlightAttr hl;
+    hl.fg = m_default_fg;
+    hl.bg = m_default_bg;
+    hl.sp = m_default_sp;
+
+    for (size_t i = 0; i < attr_map.size; i++) {
+        if (attr_map.ptr[i].key.type != msgpack::type::STR) {
+            continue;
+        }
+        std::string key = attr_map.ptr[i].key.as<std::string>();
+        auto& val = attr_map.ptr[i].val;
+
+        if (key == "foreground" &&
+            val.type == msgpack::type::POSITIVE_INTEGER) {
+            uint32_t rgb = val.as<uint32_t>();
+            hl.fg.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            hl.fg.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            hl.fg.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+            hl.fg.w = 1.0f;
+        } else if (key == "background" &&
+                   val.type == msgpack::type::POSITIVE_INTEGER) {
+            uint32_t rgb = val.as<uint32_t>();
+            hl.bg.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            hl.bg.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            hl.bg.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+            hl.bg.w = 1.0f;
+        } else if (key == "special" &&
+                   val.type == msgpack::type::POSITIVE_INTEGER) {
+            uint32_t rgb = val.as<uint32_t>();
+            hl.sp.x = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+            hl.sp.y = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+            hl.sp.z = static_cast<float>(rgb & 0xFF) / 255.0f;
+            hl.sp.w = 1.0f;
+        } else if (key == "bold" && val.type == msgpack::type::BOOLEAN) {
+            hl.bold = val.as<bool>();
+        } else if (key == "italic" && val.type == msgpack::type::BOOLEAN) {
+            hl.italic = val.as<bool>();
+        } else if (key == "underline" && val.type == msgpack::type::BOOLEAN) {
+            hl.underline = val.as<bool>();
+        } else if (key == "undercurl" && val.type == msgpack::type::BOOLEAN) {
+            hl.undercurl = val.as<bool>();
+        } else if (key == "reverse" && val.type == msgpack::type::BOOLEAN) {
+            hl.reverse = val.as<bool>();
+        }
+    }
+
+    m_hl_attrs[hl_id] = hl;
+}
+
+void NvimWidget::_redraw_hl_group_set(msgpack::object_array& args) {
+    if (args.size < 2) {
+        LOG_WARN("hl_group_set: expected 2 arguments, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::STR ||
+        args.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+        LOG_WARN("hl_group_set: invalid argument types");
+        return;
+    }
+
+    std::string group_name = args.ptr[0].as<std::string>();
+    int hl_id = static_cast<int>(args.ptr[1].as<uint32_t>());
+    m_hl_group_map[group_name] = hl_id;
+}
+
 void NvimWidget::_handle_nvim_gui_event(const char* event,
                                         msgpack::object_array& /*args*/) {}
 
@@ -821,7 +1729,7 @@ void NvimWidget::_check_font_size_changed() {
 void NvimWidget::_handle_nvim_resize() {
     ImVec2 content_size = ImGui::GetContentRegionAvail();
     float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
-    float line_height = ImGui::GetTextLineHeight();
+    float line_height = ImGui::GetTextLineHeight() + static_cast<float>(m_linespace);
 
     uint32_t new_cols =
         std::max(1u, static_cast<uint32_t>(content_size.x / char_width));
