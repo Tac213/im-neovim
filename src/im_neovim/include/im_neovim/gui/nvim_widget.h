@@ -50,6 +50,10 @@ class NvimWidget : public TextWidget,
     /* GUI-related methods */
     void _check_font_size_changed();
     void _handle_nvim_resize();
+    void _handle_keyboard_input();
+    void _handle_mouse_input();
+    void _update_ime_position();
+    void _flush_pending_input();
     void _notify_nvim_resize(uint32_t cols, uint32_t rows);
     void _render_grid(ImDrawList* draw_list, const ImVec2& pos,
                       float char_width, float line_height);
@@ -194,6 +198,16 @@ class NvimWidget : public TextWidget,
     ImVec2 m_window_size{800.0f, 400.0f};
     bool m_dark_mode{true};
     bool m_needs_render{true};
+    std::string m_pending_input;
+
+    // Mouse tracking state
+    struct {
+        uint32_t was_down{0};
+        int last_drag_cell_x{-1};
+        int last_drag_cell_y{-1};
+        float scroll_rem_y{0.0f};
+        float scroll_rem_x{0.0f};
+    } m_mouse;
 
     // Mode and cursor state
     std::vector<ModeInfoEntry> m_mode_info;

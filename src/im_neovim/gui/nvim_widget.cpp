@@ -1,9 +1,11 @@
 #include "im_neovim/gui/nvim_widget.h"
+#include "im_neovim/gui/nvim_input.h"
 #include "im_neovim/globals.h"
 #include "im_neovim/logging.h"
 #include <algorithm>
 #include <cmath>
 #include <im_app/file_system.h>
+#include <imgui_internal.h>
 
 namespace ImNeovim {
 
@@ -164,6 +166,8 @@ void NvimWidget::render() {
     // Only render content if window is open and not collapsed
     if (window_created && (m_is_embedded || !m_embedded_window_collapsed)) {
         _handle_nvim_resize();
+        _handle_keyboard_input();
+        _handle_mouse_input();
 
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -175,6 +179,8 @@ void NvimWidget::render() {
         if (m_popup_visible && !m_popup_items.empty()) {
             _render_popup_menu(draw_list, pos, char_width, line_height);
         }
+
+        _update_ime_position();
     }
 
     // Only call End() if Begin() was actually called and succeeded
@@ -1483,16 +1489,14 @@ void NvimWidget::_redraw_grid_line(msgpack::object_array& args) {
 
         std::string text = cell.ptr[0].as<std::string>();
 
-        // Optional hl_id
+        // Optional hl_id. 0 means "use default colors" and must
+        // update last_hl_id so subsequent cells don't inherit stale
+        // highlights (e.g. after a Visual selection cell).
         int hl_id = last_hl_id;
         if (cell.size >= 2 &&
             cell.ptr[1].type == msgpack::type::POSITIVE_INTEGER) {
             hl_id = static_cast<int>(cell.ptr[1].as<uint32_t>());
-            if (hl_id != 0) {
-                last_hl_id = hl_id;
-            } else {
-                hl_id = last_hl_id;
-            }
+            last_hl_id = hl_id;
         }
 
         // Optional repeat count
@@ -1739,6 +1743,190 @@ void NvimWidget::_handle_nvim_resize() {
     if (new_cols != m_state.col || new_rows != m_state.row) {
         LOG_DEBUG("Resizing nvim widget.");
         resize(new_cols, new_rows);
+    }
+}
+
+void NvimWidget::_handle_keyboard_input() {
+    if (!ImGui::IsWindowFocused() || !m_nvim_attached) {
+        _flush_pending_input();
+        return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    std::string keys = collect_input(io);
+    if (keys.empty()) {
+        _flush_pending_input();
+        return;
+    }
+
+    m_pending_input += keys;
+    if (m_pending_input.size() >= 64) {
+        _flush_pending_input();
+    }
+}
+
+void NvimWidget::_update_ime_position() {
+    if (!m_nvim_attached) {
+        return;
+    }
+
+    float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
+    float line_height = ImGui::GetTextLineHeight();
+    float eff_line_h = line_height + static_cast<float>(m_linespace);
+    ImVec2 grid_pos = ImGui::GetCursorScreenPos();
+
+    ImVec2 cursor_screen_pos(
+        grid_pos.x + m_state.cursor_x * char_width,
+        grid_pos.y + (m_state.cursor_y + 1) * eff_line_h);
+
+    ImGuiContext& g = *GImGui;
+    g.PlatformImeData.InputPos = cursor_screen_pos;
+    g.PlatformImeData.InputLineHeight = eff_line_h;
+}
+
+void NvimWidget::_flush_pending_input() {
+    if (m_pending_input.empty()) {
+        return;
+    }
+    auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
+    if (req) {
+        req->arg_str(m_pending_input.size());
+        req->arg_str_body(m_pending_input.data(), m_pending_input.size());
+    }
+    m_pending_input.clear();
+}
+
+void NvimWidget::_handle_mouse_input() {
+    if (!m_mouse_enabled || !ImGui::IsWindowFocused() || !m_nvim_attached) {
+        return;
+    }
+
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+    const Grid& grid = it->second;
+
+    ImVec2 grid_pos = ImGui::GetCursorScreenPos();
+    float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
+    float line_height = ImGui::GetTextLineHeight();
+    float eff_line_h = line_height + static_cast<float>(m_linespace);
+
+    ImGuiIO& io = ImGui::GetIO();
+    int col = static_cast<int>((io.MousePos.x - grid_pos.x) / char_width);
+    int row = static_cast<int>((io.MousePos.y - grid_pos.y) / eff_line_h);
+
+    // Bail if mouse is outside the grid rect
+    if (io.MousePos.x < grid_pos.x || io.MousePos.y < grid_pos.y) {
+        return;
+    }
+    float grid_right = grid_pos.x + grid.width * char_width;
+    float grid_bot = grid_pos.y + grid.height * eff_line_h;
+    if (io.MousePos.x >= grid_right || io.MousePos.y >= grid_bot) {
+        return;
+    }
+
+    col = std::clamp(col, 0, static_cast<int>(grid.width) - 1);
+    row = std::clamp(row, 0, static_cast<int>(grid.height) - 1);
+
+    std::string mods = modifier_prefix(io);
+
+    // Compute edge transitions
+    uint32_t pressed = 0;
+    uint32_t released = 0;
+    for (int b = 0; b < ImGuiMouseButton_COUNT; b++) {
+        bool down = io.MouseDown[b];
+        bool was = (m_mouse.was_down & (1u << b)) != 0;
+        if (down && !was) {
+            pressed |= (1u << b);
+        }
+        if (!down && was) {
+            released |= (1u << b);
+        }
+    }
+
+    // Press events (rising edge)
+    for (int b = 0; b < ImGuiMouseButton_COUNT; b++) {
+        if (!(pressed & (1u << b))) {
+            continue;
+        }
+        auto btn = static_cast<ImGuiMouseButton>(b);
+        uint8_t cnt = static_cast<uint8_t>(
+            ((io.MouseClickedCount[b] - 1) % 4) + 1);
+        std::string s = mouse_input_string(
+            mods, mouse_button_name(btn, cnt), "Mouse", col, row);
+        auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
+        if (req) {
+            req->arg_str(s.size());
+            req->arg_str_body(s.data(), s.size());
+        }
+        m_mouse.last_drag_cell_x = -1;
+        m_mouse.last_drag_cell_y = -1;
+    }
+
+    // Release events (falling edge)
+    for (int b = 0; b < ImGuiMouseButton_COUNT; b++) {
+        if (!(released & (1u << b))) {
+            continue;
+        }
+        auto btn = static_cast<ImGuiMouseButton>(b);
+        std::string s = mouse_input_string(
+            mods, mouse_button_name(btn, 0), "Release", col, row);
+        auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
+        if (req) {
+            req->arg_str(s.size());
+            req->arg_str_body(s.data(), s.size());
+        }
+        m_mouse.last_drag_cell_x = -1;
+        m_mouse.last_drag_cell_y = -1;
+    }
+
+    // Drag events (throttled: only when cell changes)
+    for (int b = 0; b < ImGuiMouseButton_COUNT; b++) {
+        if (!io.MouseDown[b]) {
+            continue;
+        }
+        auto btn = static_cast<ImGuiMouseButton>(b);
+        if (!ImGui::IsMouseDragging(btn, 0.0f)) {
+            continue;
+        }
+        if (col == m_mouse.last_drag_cell_x &&
+            row == m_mouse.last_drag_cell_y) {
+            break;
+        }
+        m_mouse.last_drag_cell_x = col;
+        m_mouse.last_drag_cell_y = row;
+        std::string s = mouse_input_string(
+            mods, mouse_button_name(btn, 0), "Drag", col, row);
+        auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
+        if (req) {
+            req->arg_str(s.size());
+            req->arg_str_body(s.data(), s.size());
+        }
+        break;
+    }
+
+    // Scroll events
+    if (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f) {
+        std::string s = convert_scroll(
+            io.MouseWheel, io.MouseWheelH, mods, col, row,
+            m_mouse.scroll_rem_y, m_mouse.scroll_rem_x);
+        if (!s.empty()) {
+            auto req =
+                start_nvim_request("nvim_input", 1, nullptr, nullptr);
+            if (req) {
+                req->arg_str(s.size());
+                req->arg_str_body(s.data(), s.size());
+            }
+        }
+    }
+
+    // Update was_down for next frame
+    m_mouse.was_down = 0;
+    for (int b = 0; b < ImGuiMouseButton_COUNT; b++) {
+        if (io.MouseDown[b]) {
+            m_mouse.was_down |= (1u << b);
+        }
     }
 }
 

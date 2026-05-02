@@ -17,6 +17,8 @@ void ScreenCell::clear() {
     chars[2] = 0;
     chars[3] = 0;
     width = 0;
+    fg = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    bg = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
     bold = false;
     italic = false;
     underline = false;
