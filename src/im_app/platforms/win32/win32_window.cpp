@@ -62,7 +62,7 @@ Win32Window::~Win32Window() { _finalize(); }
 
 void Win32Window::on_update() {
     MSG msg = {};
-    if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+    while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }

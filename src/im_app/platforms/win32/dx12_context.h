@@ -75,7 +75,6 @@ class D3D12Context : public GraphicsContext {
     size_t m_frame_index = 0;
     bool m_use_warp_device = false;
     bool m_swap_chain_tearing_support = false;
-    bool m_swap_chain_occluded = false;
     ComPtr<ID3D12Device> m_device = nullptr;
     ComPtr<IDXGISwapChain3> m_swap_chain = nullptr;
     ComPtr<ID3D12CommandQueue> m_command_queue = nullptr;
@@ -96,6 +95,7 @@ class D3D12Context : public GraphicsContext {
     HANDLE m_fence_event = nullptr;
     ComPtr<ID3D12Fence> m_fence;
     size_t m_fence_last_signaled_value = 0;
+    bool m_post_resize_skip_wait = false;
 
     void _load_pipeline();
     void _create_render_target();

@@ -73,20 +73,65 @@ void D3D12Context::finalize() {
 }
 
 void D3D12Context::swap_buffers() {
-    m_swap_chain_occluded = false;
     HRESULT hr = m_swap_chain->Present(1, 0); // Present with vsync
-    m_swap_chain_occluded = (hr == DXGI_STATUS_OCCLUDED);
+    if (hr == DXGI_STATUS_OCCLUDED) {
+        // Window is occluded; Present was a no-op. Do not advance frame
+        // index since no frame was actually submitted to the swap chain.
+        return;
+    }
+    throw_if_failed(hr);
     m_frame_index++;
 }
 
 void D3D12Context::on_frame_buffer_size_changed(uint32_t width,
                                                 uint32_t height) {
+    static const DWORD g_resize_drain_timeout_ms = 3000;
+
+    // 1. Wait for GPU to finish all pending work
     _cleanup_render_target();
+
+    // 2. Drain the swap chain present queue to ensure no frames are pending
+    //    before calling ResizeBuffers. The frame latency waitable object is
+    //    signaled when queued_presents < max_frame_latency. With max_latency
+    //    equal to g_back_buffers_count, at most that many frames can be
+    //    queued. We wait up to g_back_buffers_count times to fully drain.
+    for (uint32_t i = 0; i < g_back_buffers_count; i++) {
+        // Use a zero-timeout check first to avoid blocking unnecessarily
+        // if the queue is already partially drained.
+        DWORD result = ::WaitForSingleObject(m_swap_chain_waitable_object, 0);
+        if (result == WAIT_OBJECT_0) {
+            continue;
+        }
+        // Block until at least one frame is displayed (VSync)
+        result = ::WaitForSingleObject(m_swap_chain_waitable_object,
+                                       g_resize_drain_timeout_ms);
+        if (result != WAIT_OBJECT_0) {
+            break;
+        }
+    }
+
+    // 3. Resize the swap chain buffers
     DXGI_SWAP_CHAIN_DESC1 desc = {};
     m_swap_chain->GetDesc1(&desc);
     throw_if_failed(
         m_swap_chain->ResizeBuffers(0, width, height, desc.Format, desc.Flags));
+
+    // 4. Reset frame index tracking and fence values after resize.
+    //    The swap chain's back buffer index resets to 0, and no frames are
+    //    pending, so we reset the fence bookkeeping to a clean state.
+    m_frame_index = 0;
+    for (auto& frame_context : m_frame_contexts) {
+        frame_context.fence_value = 0;
+    }
+
+    // 5. Recreate render target views for the new back buffers
     _create_render_target();
+
+    // 6. Mark first frame after resize to skip swap chain wait.
+    //    The drain loop above may have consumed the swap chain waitable
+    //    object's signal, and ResizeBuffers does not re-signal it until
+    //    the next Present completes a VSync. Skip the wait for one frame.
+    m_post_resize_skip_wait = true;
 }
 
 void D3D12Context::_load_pipeline() {
@@ -307,18 +352,53 @@ void D3D12Context::wait_for_pending_operations() {
 }
 
 FrameContext* D3D12Context::wait_for_next_frame_context() {
+    static const DWORD g_wait_timeout_ms = 5000;
+
     FrameContext* frame_context =
         &m_frame_contexts[m_frame_index % g_frames_in_flight_count];
+    DWORD wait_result = WAIT_OBJECT_0;
+
+    // After a resize, the swap chain waitable object may be unsignaled
+    // because the drain loop consumed its signals. Skip the swap chain
+    // wait for the first frame to avoid a 5-second stall.
+    if (m_post_resize_skip_wait) {
+        m_post_resize_skip_wait = false;
+
+        // Still need to wait for fence if GPU hasn't finished with this
+        // frame context (shouldn't happen since fence_values were reset).
+        if (m_fence->GetCompletedValue() < frame_context->fence_value) {
+            m_fence->SetEventOnCompletion(frame_context->fence_value,
+                                          m_fence_event);
+            ::WaitForSingleObject(m_fence_event, g_wait_timeout_ms);
+        }
+        return frame_context;
+    }
+
     if (m_fence->GetCompletedValue() < frame_context->fence_value) {
         m_fence->SetEventOnCompletion(frame_context->fence_value,
                                       m_fence_event);
         HANDLE waitable_objects[] = {m_swap_chain_waitable_object,
                                      m_fence_event};
-        ::WaitForMultipleObjects(_countof(waitable_objects), waitable_objects,
-                                 true, INFINITE);
+        wait_result =
+            ::WaitForMultipleObjects(_countof(waitable_objects),
+                                     waitable_objects, true, g_wait_timeout_ms);
     } else {
-        ::WaitForSingleObject(m_swap_chain_waitable_object, INFINITE);
+        wait_result = ::WaitForSingleObject(m_swap_chain_waitable_object,
+                                            g_wait_timeout_ms);
     }
+
+    if (wait_result == WAIT_TIMEOUT) {
+        spdlog::critical(
+            "[D3D12] wait_for_next_frame_context timed out after {}ms "
+            "(frame_index={}, fence_completed={}, frame_fence_value={}). "
+            "Proceeding with potentially stale frame context.",
+            g_wait_timeout_ms, m_frame_index, m_fence->GetCompletedValue(),
+            frame_context->fence_value);
+    } else if (wait_result != WAIT_OBJECT_0) {
+        spdlog::error("[D3D12] wait_for_next_frame_context wait failed: {:#x}",
+                      static_cast<unsigned>(wait_result));
+    }
+
     return frame_context;
 }
 

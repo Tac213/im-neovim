@@ -35,7 +35,7 @@ Terminal::Terminal() : m_dark_mode(true) {
     // Get screen and set up callbacks BEFORE enabling
     m_vterm_screen = vterm_obtain_screen(m_vterm);
     vterm_screen_enable_altscreen(m_vterm_screen, 1);
-    vterm_screen_enable_reflow(m_vterm_screen, true);
+    vterm_screen_enable_reflow(m_vterm_screen, false);
 
     m_vterm_screen_callbacks.damage = _vterm_damage;
     m_vterm_screen_callbacks.moverect = _vterm_moverect;
@@ -924,7 +924,14 @@ int Terminal::_pop_from_scrollback(int cols, VTermScreenCell* cells) {
         return 0;
     }
     auto& back = m_sb_buffer.back();
-    std::copy(back.begin(), back.end(), cells);
+    size_t to_copy = std::min(static_cast<size_t>(cols), back.size());
+    std::copy(back.begin(), back.begin() + to_copy, cells);
+    // Zero-fill remaining cells, ensuring width=1 to avoid
+    // infinite loops in libvterm's for(pos.col += width) iteration
+    for (size_t i = to_copy; i < static_cast<size_t>(cols); i++) {
+        memset(&cells[i], 0, sizeof(VTermScreenCell));
+        cells[i].width = 1;
+    }
     m_sb_buffer.pop_back();
     return 1;
 }
