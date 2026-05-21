@@ -248,6 +248,7 @@ class NvimWidget : public TextWidget,
     uint64_t m_nvim_api_level{0};
     std::vector<std::string> m_nvim_ui_options;
     bool m_nvim_attached{false};
+    bool m_nvim_exited{false};
 
     /* msgpack-related */
     std::atomic<uint32_t> m_nvim_msgid{1};

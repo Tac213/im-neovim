@@ -124,7 +124,13 @@ NvimWidget::NvimWidget() {
 
 NvimWidget::~NvimWidget() {
     if (m_nvim_proc.pid > 0) {
-        uv_process_kill(&m_nvim_proc, SIGKILL);
+        if (!m_nvim_exited) {
+            // Nvim is still running — kill it first.
+            uv_process_kill(&m_nvim_proc, SIGKILL);
+        }
+        // Always close the process handle from the destructor (never from
+        // inside the exit callback, where libuv's exit_cb_pending is set).
+        uv_close(reinterpret_cast<uv_handle_t*>(&m_nvim_proc), nullptr);
         m_nvim_proc.data = nullptr;
         m_nvim_proc.pid = 0;
     }
@@ -190,8 +196,8 @@ void NvimWidget::render() {
         _update_ime_position();
     }
 
-    // Only call End() if Begin() was actually called and succeeded
-    if (window_created && !m_is_embedded) {
+    // Always call End() when Begin() was called, per ImGui requirements
+    if (!m_is_embedded) {
         ImGui::End();
     }
 }
@@ -2135,7 +2141,11 @@ void NvimWidget::_on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
     self->m_in_pipe.data = nullptr;
     uv_close(reinterpret_cast<uv_handle_t*>(&self->m_out_pipe), nullptr);
     self->m_out_pipe.data = nullptr;
-    uv_close(reinterpret_cast<uv_handle_t*>(nvim_proc), nullptr);
+    // Mark as exited so the destructor knows not to kill it again.
+    // Do NOT call uv_close on the process handle — doing so from within
+    // the exit callback triggers a libuv assertion on Windows
+    // (exit_cb_pending is still set). The destructor handles cleanup.
+    self->m_nvim_exited = true;
     self->m_nvim_msgid.store(1);
 }
 

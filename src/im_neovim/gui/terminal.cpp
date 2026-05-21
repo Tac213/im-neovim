@@ -94,8 +94,8 @@ void Terminal::render() {
         _handle_keyboard_input(io);
     }
 
-    // Only call End() if Begin() was actually called and succeeded
-    if (window_created && !m_is_embedded) {
+    // Always call End() when Begin() was called, per ImGui requirements
+    if (!m_is_embedded) {
         ImGui::End();
     }
 }
