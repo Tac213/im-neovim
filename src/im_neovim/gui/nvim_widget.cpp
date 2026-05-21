@@ -1,11 +1,12 @@
 #include "im_neovim/gui/nvim_widget.h"
-#include "im_neovim/gui/nvim_input.h"
 #include "im_neovim/globals.h"
+#include "im_neovim/gui/nvim_input.h"
 #include "im_neovim/logging.h"
 #include <algorithm>
 #include <cmath>
 #include <im_app/file_system.h>
 #include <imgui_internal.h>
+
 
 namespace ImNeovim {
 
@@ -48,12 +49,18 @@ void NvimWidget::Grid::scroll_region(int count) {
     uint32_t right = m_scroll_region.right;
 
     // Clamp to grid bounds
-    if (top >= height) top = 0;
-    if (bot > height) bot = height;
-    if (bot <= top) return;
-    if (left >= width) left = 0;
-    if (right > width) right = width;
-    if (right <= left) return;
+    if (top >= height)
+        top = 0;
+    if (bot > height)
+        bot = height;
+    if (bot <= top)
+        return;
+    if (left >= width)
+        left = 0;
+    if (right > width)
+        right = width;
+    if (right <= left)
+        return;
 
     if (count > 0) {
         // Scroll up: shift rows [top+count, bot) to [top, bot-count)
@@ -63,7 +70,8 @@ void NvimWidget::Grid::scroll_region(int count) {
             }
         }
         // Clear vacated rows at the bottom
-        for (uint32_t y = (bot > static_cast<uint32_t>(count) ? bot - count : top);
+        for (uint32_t y =
+                 (bot > static_cast<uint32_t>(count) ? bot - count : top);
              y < bot; y++) {
             for (uint32_t x = left; x < right; x++) {
                 cells[y][x].clear();
@@ -248,8 +256,7 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
             float pct = static_cast<float>(m_cursor_cell_percentage) / 100.0f;
             switch (m_cursor_shape) {
             case CursorShape::Horizontal:
-                cursor_min.y =
-                    cursor_pos.y + line_height * (1.0f - pct);
+                cursor_min.y = cursor_pos.y + line_height * (1.0f - pct);
                 break;
             case CursorShape::Vertical:
                 cursor_max.x = cursor_pos.x + char_width * pct;
@@ -285,8 +292,8 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
                                                    &text[len]);
                 }
                 draw_list->AddText(
-                    cursor_pos,
-                    ImGui::ColorConvertFloat4ToU32(cursor_cell.fg), text);
+                    cursor_pos, ImGui::ColorConvertFloat4ToU32(cursor_cell.fg),
+                    text);
             } else {
                 draw_list->AddRectFilled(
                     cursor_min, cursor_max,
@@ -303,8 +310,7 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
             mode_text[3] = static_cast<char>(mode_text[3] - 'a' + 'A');
         }
 
-        float text_width =
-            ImGui::CalcTextSize(mode_text.c_str()).x;
+        float text_width = ImGui::CalcTextSize(mode_text.c_str()).x;
         ImVec2 mode_pos(pos.x + (grid.width * char_width - text_width) * 0.5f,
                         pos.y + grid.height * effective_line_height -
                             effective_line_height);
@@ -321,10 +327,9 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
             float alpha = 0.15f * (1.0f - static_cast<float>(elapsed / 0.2));
             ImVec2 grid_end(pos.x + grid.width * char_width,
                             pos.y + grid.height * effective_line_height);
-            draw_list->AddRectFilled(
-                pos, grid_end,
-                ImGui::ColorConvertFloat4ToU32(
-                    ImVec4(1.0f, 1.0f, 1.0f, alpha)));
+            draw_list->AddRectFilled(pos, grid_end,
+                                     ImGui::ColorConvertFloat4ToU32(
+                                         ImVec4(1.0f, 1.0f, 1.0f, alpha)));
         } else {
             m_bell_pending = false;
         }
@@ -332,14 +337,12 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
 }
 
 void NvimWidget::_render_popup_menu(ImDrawList* draw_list, const ImVec2& pos,
-                                   float char_width, float line_height) {
-    float effective_line_height =
-        line_height + static_cast<float>(m_linespace);
+                                    float char_width, float line_height) {
+    float effective_line_height = line_height + static_cast<float>(m_linespace);
 
     // Position popup below the anchor row
     float menu_x = pos.x + m_popup_anchor_col * char_width;
-    float menu_y =
-        pos.y + (m_popup_anchor_row + 1) * effective_line_height;
+    float menu_y = pos.y + (m_popup_anchor_row + 1) * effective_line_height;
 
     // Build display strings and measure widest item
     std::vector<std::string> display_strings;
@@ -361,9 +364,9 @@ void NvimWidget::_render_popup_menu(ImDrawList* draw_list, const ImVec2& pos,
 
     // Add padding
     float menu_width = max_width + ImGui::GetStyle().WindowPadding.x * 2.0f;
-    float menu_height = static_cast<float>(m_popup_items.size()) *
-                            effective_line_height +
-                        ImGui::GetStyle().WindowPadding.y * 2.0f;
+    float menu_height =
+        static_cast<float>(m_popup_items.size()) * effective_line_height +
+        ImGui::GetStyle().WindowPadding.y * 2.0f;
 
     // Constrain to grid bounds
     auto it = m_grids.find(m_current_grid);
@@ -379,24 +382,21 @@ void NvimWidget::_render_popup_menu(ImDrawList* draw_list, const ImVec2& pos,
 
         float grid_bottom = pos.y + it->second.height * effective_line_height;
         if (menu_y + menu_height > grid_bottom) {
-            menu_y =
-                pos.y + m_popup_anchor_row * effective_line_height - menu_height;
+            menu_y = pos.y + m_popup_anchor_row * effective_line_height -
+                     menu_height;
             if (menu_y < pos.y) {
                 menu_y = pos.y;
-                menu_height =
-                    std::min(menu_height, grid_bottom - pos.y);
+                menu_height = std::min(menu_height, grid_bottom - pos.y);
             }
         }
     }
 
     ImGui::SetNextWindowPos(ImVec2(menu_x, menu_y), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(menu_width, menu_height),
-                             ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(menu_width, menu_height), ImGuiCond_Always);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
-                             ImGuiWindowFlags_NoMove |
-                             ImGuiWindowFlags_NoSavedSettings |
-                             ImGuiWindowFlags_NoFocusOnAppearing;
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
 
     // Use a unique ID so multiple popups don't conflict
     if (ImGui::Begin("##popup_menu", nullptr, flags)) {
@@ -419,9 +419,8 @@ void NvimWidget::_render_popup_menu(ImDrawList* draw_list, const ImVec2& pos,
 
             ImU32 text_color =
                 ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            popup_draw->AddText(
-                ImVec2(item_pos.x + 4.0f, item_pos.y), text_color,
-                display_strings[i].c_str());
+            popup_draw->AddText(ImVec2(item_pos.x + 4.0f, item_pos.y),
+                                text_color, display_strings[i].c_str());
         }
     }
     ImGui::End();
@@ -1278,7 +1277,8 @@ void NvimWidget::_redraw_mode_change(msgpack::object_array& args) {
             return;
         }
 
-        const ModeInfoEntry& info = m_mode_info[static_cast<size_t>(mode_index)];
+        const ModeInfoEntry& info =
+            m_mode_info[static_cast<size_t>(mode_index)];
 
         if (info.cursor_shape == "block") {
             m_cursor_shape = CursorShape::Block;
@@ -1516,7 +1516,8 @@ void NvimWidget::_redraw_grid_line(msgpack::object_array& args) {
         }
 
         for (uint32_t r = 0; r < repeat && col < grid.width; r++) {
-            if (col >= grid.width) break;
+            if (col >= grid.width)
+                break;
 
             ScreenCell& screen_cell = grid.cells[row][col];
 
@@ -1531,7 +1532,8 @@ void NvimWidget::_redraw_grid_line(msgpack::object_array& args) {
                 uint32_t rune;
                 size_t decoded =
                     TextWidget::utf8_decode(ptr + offset, &rune, remaining);
-                if (decoded == 0) break;
+                if (decoded == 0)
+                    break;
                 screen_cell.chars[char_count++] = rune;
                 offset += decoded;
                 remaining -= decoded;
@@ -1553,8 +1555,7 @@ void NvimWidget::_redraw_grid_line(msgpack::object_array& args) {
 
 void NvimWidget::_redraw_grid_clear(msgpack::object_array& args) {
     uint32_t grid_id = m_current_grid;
-    if (args.size >= 1 &&
-        args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+    if (args.size >= 1 && args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
         grid_id = args.ptr[0].as<uint32_t>();
     }
 
@@ -1591,7 +1592,8 @@ void NvimWidget::_redraw_grid_scroll(msgpack::object_array& args) {
         args.ptr[2].type != msgpack::type::POSITIVE_INTEGER ||
         args.ptr[3].type != msgpack::type::POSITIVE_INTEGER ||
         args.ptr[4].type != msgpack::type::POSITIVE_INTEGER ||
-        args.ptr[5].type != msgpack::type::POSITIVE_INTEGER ||
+        (args.ptr[5].type != msgpack::type::POSITIVE_INTEGER &&
+         args.ptr[5].type != msgpack::type::NEGATIVE_INTEGER) ||
         (args.ptr[6].type != msgpack::type::POSITIVE_INTEGER &&
          args.ptr[6].type != msgpack::type::NEGATIVE_INTEGER)) {
         LOG_WARN("grid_scroll: invalid argument types");
@@ -1733,7 +1735,8 @@ void NvimWidget::_check_font_size_changed() {
 void NvimWidget::_handle_nvim_resize() {
     ImVec2 content_size = ImGui::GetContentRegionAvail();
     float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
-    float line_height = ImGui::GetTextLineHeight() + static_cast<float>(m_linespace);
+    float line_height =
+        ImGui::GetTextLineHeight() + static_cast<float>(m_linespace);
 
     uint32_t new_cols =
         std::max(1u, static_cast<uint32_t>(content_size.x / char_width));
@@ -1775,9 +1778,8 @@ void NvimWidget::_update_ime_position() {
     float eff_line_h = line_height + static_cast<float>(m_linespace);
     ImVec2 grid_pos = ImGui::GetCursorScreenPos();
 
-    ImVec2 cursor_screen_pos(
-        grid_pos.x + m_state.cursor_x * char_width,
-        grid_pos.y + (m_state.cursor_y + 1) * eff_line_h);
+    ImVec2 cursor_screen_pos(grid_pos.x + m_state.cursor_x * char_width,
+                             grid_pos.y + (m_state.cursor_y + 1) * eff_line_h);
 
     ImGuiContext& g = *GImGui;
     g.PlatformImeData.InputPos = cursor_screen_pos;
@@ -1851,10 +1853,10 @@ void NvimWidget::_handle_mouse_input() {
             continue;
         }
         auto btn = static_cast<ImGuiMouseButton>(b);
-        uint8_t cnt = static_cast<uint8_t>(
-            ((io.MouseClickedCount[b] - 1) % 4) + 1);
-        std::string s = mouse_input_string(
-            mods, mouse_button_name(btn, cnt), "Mouse", col, row);
+        uint8_t cnt =
+            static_cast<uint8_t>(((io.MouseClickedCount[b] - 1) % 4) + 1);
+        std::string s = mouse_input_string(mods, mouse_button_name(btn, cnt),
+                                           "Mouse", col, row);
         auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
         if (req) {
             req->arg_str(s.size());
@@ -1870,8 +1872,8 @@ void NvimWidget::_handle_mouse_input() {
             continue;
         }
         auto btn = static_cast<ImGuiMouseButton>(b);
-        std::string s = mouse_input_string(
-            mods, mouse_button_name(btn, 0), "Release", col, row);
+        std::string s = mouse_input_string(mods, mouse_button_name(btn, 0),
+                                           "Release", col, row);
         auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
         if (req) {
             req->arg_str(s.size());
@@ -1896,8 +1898,8 @@ void NvimWidget::_handle_mouse_input() {
         }
         m_mouse.last_drag_cell_x = col;
         m_mouse.last_drag_cell_y = row;
-        std::string s = mouse_input_string(
-            mods, mouse_button_name(btn, 0), "Drag", col, row);
+        std::string s = mouse_input_string(mods, mouse_button_name(btn, 0),
+                                           "Drag", col, row);
         auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
         if (req) {
             req->arg_str(s.size());
@@ -1908,12 +1910,11 @@ void NvimWidget::_handle_mouse_input() {
 
     // Scroll events
     if (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f) {
-        std::string s = convert_scroll(
-            io.MouseWheel, io.MouseWheelH, mods, col, row,
-            m_mouse.scroll_rem_y, m_mouse.scroll_rem_x);
+        std::string s =
+            convert_scroll(io.MouseWheel, io.MouseWheelH, mods, col, row,
+                           m_mouse.scroll_rem_y, m_mouse.scroll_rem_x);
         if (!s.empty()) {
-            auto req =
-                start_nvim_request("nvim_input", 1, nullptr, nullptr);
+            auto req = start_nvim_request("nvim_input", 1, nullptr, nullptr);
             if (req) {
                 req->arg_str(s.size());
                 req->arg_str_body(s.data(), s.size());
