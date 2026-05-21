@@ -112,7 +112,7 @@ class NvimWidget : public TextWidget,
     /* RPC-related methods */
     void _send_nvim_error(const msgpack::object& req, const std::string& msg);
     void _send_nvim_error(uint32_t msgid, const std::string& msg);
-    void _handle_nvim_rpc(const std::vector<char>& msgpack_data);
+    std::size_t _handle_nvim_rpc(const std::vector<char>& msgpack_data);
     void _dispatch(msgpack::object& req);
     void _dispatch_request(msgpack::object& req);
     void _dispatch_response(msgpack::object& resp);
@@ -162,11 +162,7 @@ class NvimWidget : public TextWidget,
     } m_state;
 
     // Cursor shape for different modes
-    enum class CursorShape {
-        Block,
-        Horizontal,
-        Vertical
-    };
+    enum class CursorShape { Block, Horizontal, Vertical };
 
     // Mode info entry from mode_info_set
     struct ModeInfoEntry {

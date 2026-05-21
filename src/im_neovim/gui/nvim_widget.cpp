@@ -7,7 +7,6 @@
 #include <im_app/file_system.h>
 #include <imgui_internal.h>
 
-
 namespace ImNeovim {
 
 // HighlightAttr implementation
@@ -631,6 +630,9 @@ void NvimWidget::_initialize() {
 
 void NvimWidget::_set_nvim_attached(bool attached) {
     m_nvim_attached = attached;
+    if (attached) {
+        _notify_nvim_resize(m_state.col, m_state.row);
+    }
 }
 
 void NvimWidget::_handle_nvim_request(const uint32_t& msgid, const char* method,
@@ -1979,9 +1981,10 @@ void NvimWidget::_send_nvim_error(uint32_t msgid, const std::string& msg) {
     }
 }
 
-void NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
+std::size_t
+NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
     if (msgpack_data.empty())
-        return;
+        return 0;
     std::size_t len = msgpack_data.size();
     std::size_t off = 0;
     while (off < len) {
@@ -1999,9 +2002,10 @@ void NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
             break;
         } catch (const std::exception& e) {
             LOG_ERROR("Failed to parse nvim msgpack data: {}", e.what());
-            break;
+            return len; // Discard all data on parse error
         }
     }
+    return off;
 }
 
 void NvimWidget::_dispatch(msgpack::object& req) {
@@ -2168,8 +2172,14 @@ void NvimWidget::_uv_read_cb(uv_stream_t* stream, ssize_t nread,
         self->m_nvim_resp_buf.insert(self->m_nvim_resp_buf.end(), buf->base,
                                      buf->base + nread);
         free(buf->base);
-        self->_handle_nvim_rpc(self->m_nvim_resp_buf);
-        self->m_nvim_resp_buf.clear();
+        std::size_t consumed = self->_handle_nvim_rpc(self->m_nvim_resp_buf);
+        if (consumed >= self->m_nvim_resp_buf.size()) {
+            self->m_nvim_resp_buf.clear();
+        } else {
+            self->m_nvim_resp_buf.erase(self->m_nvim_resp_buf.begin(),
+                                        self->m_nvim_resp_buf.begin() +
+                                            consumed);
+        }
     }
 }
 
