@@ -454,7 +454,7 @@ void NvimWidget::resize(uint32_t cols, uint32_t rows) {
         _notify_nvim_resize(cols, rows);
     }
 
-    LOG_DEBUG("Nvim widget resized to {}x{}", cols, rows);
+    LOG_TRACE("Nvim widget resized to {}x{}", cols, rows);
 }
 
 std::shared_ptr<NvimRequest> NvimWidget::start_nvim_request(
@@ -641,7 +641,7 @@ void NvimWidget::_handle_nvim_request(const uint32_t& msgid, const char* method,
 void NvimWidget::_handle_nvim_notification(const char* event,
                                            msgpack::object_array& args) {
     if (strcmp(event, "redraw") == 0) {
-        LOG_DEBUG("Nvim redraw event.");
+        LOG_TRACE("Nvim redraw event.");
         for (size_t i = 0; i < args.size; i++) {
             auto& arg = args.ptr[i];
             if (arg.type != msgpack::type::ARRAY) {
@@ -1746,7 +1746,7 @@ void NvimWidget::_handle_nvim_resize() {
         std::max(1u, static_cast<uint32_t>(content_size.y / line_height));
 
     if (new_cols != m_state.col || new_rows != m_state.row) {
-        LOG_DEBUG("Resizing nvim widget.");
+        LOG_TRACE("Resizing nvim widget.");
         resize(new_cols, new_rows);
     }
 }
@@ -1991,13 +1991,13 @@ NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
         msgpack::unpacked result;
         try {
             msgpack::unpack(result, msgpack_data.data(), len, off);
-            LOG_DEBUG("Parsed a complete nvim msgpack package (offset: {})",
+            LOG_TRACE("Parsed a complete nvim msgpack package (offset: {})",
                       off);
             msgpack::object obj(result.get());
             _dispatch(obj);
         } catch (const msgpack::insufficient_bytes&) { // Incomplete data - stop
                                                        // and wait for more
-            LOG_DEBUG("Incomplete msgpack data, waiting for more (offset: {})",
+            LOG_TRACE("Incomplete msgpack data, waiting for more (offset: {})",
                       off);
             break;
         } catch (const std::exception& e) {
@@ -2258,7 +2258,7 @@ void NvimRequest::_send() {
     }
     if (auto nvim = m_nvim.lock()) {
         std::string send_buf = m_buffer.str();
-        LOG_DEBUG("Send nvim RPC '{}'[msgid:{}] ({} bytes)", m_method, msgid,
+        LOG_TRACE("Send nvim RPC '{}'[msgid:{}] ({} bytes)", m_method, msgid,
                   send_buf.size());
 
         // Will be deleted in NvimWidget::_nv_write_cb.

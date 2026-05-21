@@ -3,6 +3,7 @@
 
 #define IM_NVIM_LOGGER_NAME "ImNeoVim"
 
+#define LOG_TRACE(...) ::spdlog::get(IM_NVIM_LOGGER_NAME)->trace(__VA_ARGS__)
 #define LOG_DEBUG(...) ::spdlog::get(IM_NVIM_LOGGER_NAME)->debug(__VA_ARGS__)
 #define LOG_INFO(...) ::spdlog::get(IM_NVIM_LOGGER_NAME)->info(__VA_ARGS__)
 #define LOG_WARN(...) ::spdlog::get(IM_NVIM_LOGGER_NAME)->warn(__VA_ARGS__)
