@@ -22,6 +22,7 @@ set(im_app_public_files
     "${public_dir}/im_app/application.h"
     "${public_dir}/im_app/file_system.h"
     "${public_dir}/im_app/pty.h"
+    "${public_dir}/im_app/font_manager.h"
 )
 
 set(im_app_private_files
@@ -29,6 +30,7 @@ set(im_app_private_files
     "${im_app_private_header_dir}/im_app/imgui_renderer.h"
     "${im_app_private_header_dir}/im_app/window.h"
     "${im_app_dir}/application.cpp"
+    "${im_app_dir}/font_manager.cpp"
 )
 
 set(im_app_platform_specific_files)
@@ -52,6 +54,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         "${im_app_platform_dir}/win32_imgui_renderer.cpp"
         "${im_app_platform_dir}/win32_pty.h"
         "${im_app_platform_dir}/win32_pty.cpp"
+        "${im_app_platform_dir}/win32_font_manager.cpp"
     )
 endif()
 
@@ -68,6 +71,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         "${im_app_platform_dir}/main.cpp"
         "${im_app_platform_dir}/linux_pty.h"
         "${im_app_platform_dir}/linux_pty.cpp"
+        "${im_app_platform_dir}/linux_font_manager.cpp"
     )
 endif()
 
@@ -86,6 +90,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
         "${im_app_platform_dir}/main.cpp"
         "${im_app_platform_dir}/darwin_pty.h"
         "${im_app_platform_dir}/darwin_pty.cpp"
+        "${im_app_platform_dir}/darwin_font_manager.mm"
     )
 endif()
 
@@ -111,6 +116,7 @@ target_link_libraries(
     imgui
     PRIVATE
     GLEW::glew
+    freetype
 )
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")

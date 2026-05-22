@@ -132,6 +132,11 @@ if(NOT TARGET nvim)
     endif()
 endif()
 
+if(NOT TARGET freetype)
+    add_subdirectory(freetype)
+    set_target_properties(freetype PROPERTIES FOLDER ${third_party_folder}/freetype)
+endif()
+
 if(NOT TARGET libuv)
     add_subdirectory(libuv)
 endif()

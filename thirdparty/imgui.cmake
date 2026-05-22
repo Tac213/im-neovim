@@ -23,6 +23,8 @@ set(imgui_backends
 set(imgui_miscs
     ${imgui_source_dir}/misc/cpp/imgui_stdlib.cpp
     ${imgui_source_dir}/misc/cpp/imgui_stdlib.h
+    ${imgui_source_dir}/misc/freetype/imgui_freetype.cpp
+    ${imgui_source_dir}/misc/freetype/imgui_freetype.h
 )
 
 set(imgui_platform_specific_files "")
@@ -85,6 +87,10 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
         ${METAL_FRAMEWORK}
     )
 endif()
+
+target_compile_definitions(imgui PUBLIC IMGUI_ENABLE_FREETYPE)
+
+target_link_libraries(imgui PRIVATE freetype)
 
 target_include_directories(imgui
     PUBLIC

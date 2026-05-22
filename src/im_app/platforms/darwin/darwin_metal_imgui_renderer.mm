@@ -1,5 +1,6 @@
 #include "darwin_metal_imgui_renderer.h"
 #include "metal_context.h"
+#include "im_app/font_manager.h"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_metal.h>
 
@@ -123,30 +124,12 @@ void DarwinMetalImGuiRenderer::_initialize() {
     ImGui_ImplMetal_Init(device);
 
     // Load Fonts
-    // - If no fonts are loaded, dear imgui will use the default font. You can
-    // also load multiple fonts and use ImGui::PushFont()/PopFont() to select
-    // them.
-    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you
-    // need to select the font among multiple.
-    // - If the file cannot be loaded, the function will return a nullptr.
-    // Please handle those errors in your application (e.g. use an assertion, or
-    // display an error and quit).
-    // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use
-    // Freetype for higher quality font rendering.
-    // - Read 'docs/FONTS.md' for more instructions and details. If you like the
-    // default font but want it to scale better, consider using the
-    // 'ProggyVector' from the same author!
-    // - Remember that in C/C++ if you want to include a backslash \ in a string
-    // literal you need to write a double backslash \\ !
-    // style.FontSizeBase = 20.0f;
-    // io.Fonts->AddFontDefault();
-    // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf");
-    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf");
-    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf");
-    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf");
-    // ImFont* font =
-    // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf");
-    // IM_ASSERT(font != nullptr);
+    // - Using FontManager to load the platform default system font.
+    // - Falls back to ImGui default font (ProggyClean) if system font is unavailable.
+    ImFont* font = FontManager::load_default_font(io.Fonts, 14.0f).regular;
+    if (!font) {
+        io.Fonts->AddFontDefault();
+    }
 
     m_render_pass_descriptor = [MTLRenderPassDescriptor new];
 }

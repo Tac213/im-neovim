@@ -1,5 +1,6 @@
 #include "im_neovim/gui/text_widget.h"
 #include "im_neovim/logging.h"
+#include "im_app/font_manager.h"
 #include <algorithm>
 
 namespace ImNeovim {
@@ -94,12 +95,33 @@ void TextWidget::render_cell(ImDrawList* draw_list, const ScreenCell& cell,
 
     // Draw character
     if (cell.width > 0) {
+        // Select appropriate font variant for bold/italic
+        const auto& fonts = ImApp::FontManager::get_loaded_fonts();
+        ImFont* target_font = fonts.regular;
+        if (cell.bold && cell.italic && fonts.bold_italic &&
+            fonts.bold_italic != fonts.regular) {
+            target_font = fonts.bold_italic;
+        } else if (cell.bold && fonts.bold && fonts.bold != fonts.regular) {
+            target_font = fonts.bold;
+        } else if (cell.italic && fonts.italic &&
+                   fonts.italic != fonts.regular) {
+            target_font = fonts.italic;
+        }
+
+        if (target_font && target_font != ImGui::GetFont()) {
+            ImGui::PushFont(target_font);
+        }
+
         char text[g_utf_size] = {0};
         size_t len = 0;
         for (int i = 0; i < cell.width && i < 4; i++) {
             len += utf8_encode(cell.chars[i], &text[len]);
         }
         draw_list->AddText(char_pos, ImGui::ColorConvertFloat4ToU32(fg), text);
+
+        if (target_font && target_font != ImGui::GetFont()) {
+            ImGui::PopFont();
+        }
     }
 
     // Draw underline
