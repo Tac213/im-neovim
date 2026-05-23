@@ -79,6 +79,7 @@ class NvimWidget : public TextWidget,
     void _redraw_mouse_off(msgpack::object_array& args);
     void _redraw_bell(msgpack::object_array& args);
     void _redraw_suspend(msgpack::object_array& args);
+    void _redraw_chdir(msgpack::object_array& args);
     void _redraw_popupmenu_show(msgpack::object_array& args);
     void _redraw_popupmenu_select(msgpack::object_array& args);
     void _redraw_popupmenu_hide(msgpack::object_array& args);

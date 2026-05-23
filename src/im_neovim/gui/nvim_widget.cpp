@@ -731,6 +731,8 @@ void NvimWidget::_handle_nvim_redraw(const char* operation,
         _redraw_bell(args);
     } else if (strcmp(operation, "suspend") == 0) {
         _redraw_suspend(args);
+    } else if (strcmp(operation, "chdir") == 0) {
+        _redraw_chdir(args);
     } else if (strcmp(operation, "popupmenu_show") == 0) {
         _redraw_popupmenu_show(args);
     } else if (strcmp(operation, "popupmenu_select") == 0) {
@@ -1338,6 +1340,19 @@ void NvimWidget::_redraw_bell(msgpack::object_array& /*args*/) {
 void NvimWidget::_redraw_suspend(msgpack::object_array& /*args*/) {
     m_suspend_pending = true;
     LOG_DEBUG("suspend requested (window minimize deferred)");
+}
+
+void NvimWidget::_redraw_chdir(msgpack::object_array& args) {
+    if (args.size < 1) {
+        LOG_WARN("chdir: expected 1 argument, got {}", args.size);
+        return;
+    }
+    if (args.ptr[0].type != msgpack::type::STR) {
+        LOG_WARN("chdir: path must be a string");
+        return;
+    }
+    m_nvim_cwd = args.ptr[0].as<std::string>();
+    LOG_DEBUG("chdir: {}", m_nvim_cwd);
 }
 
 void NvimWidget::_redraw_popupmenu_show(msgpack::object_array& args) {
