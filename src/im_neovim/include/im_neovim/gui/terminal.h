@@ -15,6 +15,11 @@ using uchar = unsigned char;
 
 static constexpr size_t g_utf_size = 4;
 
+// Minimum usable terminal dimensions to prevent the shell from being
+// launched into a tiny content area before the ImGui layout stabilizes.
+static constexpr int g_min_term_cols = 10;
+static constexpr int g_min_term_rows = 5;
+
 class Terminal : public TextWidget {
   public:
     // Common type definitions

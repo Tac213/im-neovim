@@ -77,9 +77,6 @@ void Terminal::render() {
     if (!m_is_visible) {
         return;
     }
-    if (!m_pty->is_valid()) {
-        _start_shell();
-    }
 
     _check_font_size_changed();
     bool window_created = TextWidget::setup_window();
@@ -88,6 +85,25 @@ void Terminal::render() {
     if (window_created && (m_is_embedded || !m_embedded_window_collapsed)) {
         ImGuiIO& io = ImGui::GetIO();
         _handle_terminal_resize();
+
+        // Defer PTY launch until the content area has genuinely reached a
+        // usable size.  We check the *raw* content dimensions (before the
+        // minimum-size clamp) so that we don't launch the shell into a tiny
+        // area that merely happens to be clamped up to 10×5.  This prevents
+        // the banner / initial output from being truncated and pushed to
+        // scrollback before the ImGui dockspace layout stabilizes.
+        if (!m_pty->is_valid()) {
+            ImVec2 content_size = ImGui::GetContentRegionAvail();
+            float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
+            float line_height = ImGui::GetTextLineHeight();
+            int raw_cols = static_cast<int>(content_size.x / char_width);
+            int raw_rows = static_cast<int>(content_size.y / line_height);
+
+            if (raw_cols >= g_min_term_cols && raw_rows >= g_min_term_rows) {
+                _start_shell();
+            }
+        }
+
         _render_buffer();
         _handle_scrollback(io, m_state.row);
         _handle_mouse_input(io);
@@ -107,27 +123,35 @@ void Terminal::resize(int cols, int rows) {
     float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
     float line_height = ImGui::GetTextLineHeight();
 
-    // Calculate new dimensions based on actual font metrics
-    int new_cols = std::max(1, static_cast<int>(content_size.x / char_width));
-    int new_rows = std::max(1, static_cast<int>(content_size.y / line_height));
+    // Calculate new dimensions based on actual font metrics,
+    // enforcing a minimum usable size to prevent truncation
+    // during early frames when the layout is not yet stable.
+    int new_cols = std::max(g_min_term_cols,
+                            static_cast<int>(content_size.x / char_width));
+    int new_rows = std::max(g_min_term_rows,
+                            static_cast<int>(content_size.y / line_height));
 
     // Only resize if dimensions actually changed
     if (new_cols == m_state.col && new_rows == m_state.row) {
         return;
     }
 
+    // Use the calculated (and clamped) values consistently
+    int clamped_cols = new_cols;
+    int clamped_rows = new_rows;
+
     // Create new buffers
-    std::vector<bool> new_dirty(rows, true);
+    std::vector<bool> new_dirty(clamped_rows, true);
 
     // Update terminal state
-    m_state.row = rows;
-    m_state.col = cols;
+    m_state.row = clamped_rows;
+    m_state.col = clamped_cols;
     m_state.top = 0;
-    m_state.bot = rows - 1;
+    m_state.bot = clamped_rows - 1;
 
     // Then clamp to ensure validity
-    m_state.top = std::clamp(m_state.top, 0, rows - 1);
-    m_state.bot = std::clamp(m_state.bot, m_state.top, rows - 1);
+    m_state.top = std::clamp(m_state.top, 0, clamped_rows - 1);
+    m_state.bot = std::clamp(m_state.bot, m_state.top, clamped_rows - 1);
     if (m_state.bot < m_state.top) {
         m_state.bot = m_state.top;
     }
@@ -136,8 +160,8 @@ void Terminal::resize(int cols, int rows) {
     m_state.dirty = std::move(new_dirty);
 
     // Ensure cursor stays within bounds
-    m_state.c.x = std::min(m_state.c.x, cols - 1);
-    m_state.c.y = std::min(m_state.c.y, rows - 1);
+    m_state.c.x = std::min(m_state.c.x, clamped_cols - 1);
+    m_state.c.y = std::min(m_state.c.y, clamped_rows - 1);
 
     // Update PTY size if valid
     if (m_pty->is_valid()) {
@@ -146,7 +170,7 @@ void Terminal::resize(int cols, int rows) {
     vterm_set_size(m_vterm, m_state.row, m_state.col);
     vterm_screen_flush_damage(m_vterm_screen);
 
-    LOG_DEBUG("Terminal resized to {}x{}", cols, rows);
+    LOG_DEBUG("Terminal resized to {}x{}", clamped_cols, clamped_rows);
 }
 
 void Terminal::process_input(const std::string& input) const {
@@ -271,8 +295,10 @@ void Terminal::_handle_terminal_resize() {
     float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
     float line_height = ImGui::GetTextLineHeight();
 
-    int new_cols = std::max(1, static_cast<int>(content_size.x / char_width));
-    int new_rows = std::max(1, static_cast<int>(content_size.y / line_height));
+    int new_cols = std::max(g_min_term_cols,
+                            static_cast<int>(content_size.x / char_width));
+    int new_rows = std::max(g_min_term_rows,
+                            static_cast<int>(content_size.y / line_height));
 
     if (new_cols != m_state.col || new_rows != m_state.row) {
         LOG_DEBUG("Resizing terminal.");
