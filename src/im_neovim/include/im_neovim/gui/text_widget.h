@@ -51,12 +51,16 @@ class TextWidget {
     void check_font_size_changed();
 
     // Common rendering helpers
-    static void render_cell(ImDrawList* draw_list, const ScreenCell& cell,
+    // Returns true if a double-width (CJK) character was rendered.
+    static bool render_cell(ImDrawList* draw_list, const ScreenCell& cell,
                             const ImVec2& char_pos, float char_width,
                             float line_height);
     static void render_cursor(ImDrawList* draw_list, const ImVec2& cursor_pos,
                               const ScreenCell& cursor_cell, float char_width,
                               float line_height, float alpha);
+
+    // Character classification
+    static bool is_wide_char(uint32_t codepoint);
 
     // UTF-8 utilities
     static size_t utf8_decode(const char* c, uint32_t* u, size_t clen);

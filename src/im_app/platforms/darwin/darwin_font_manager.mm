@@ -110,7 +110,8 @@ static std::string find_font_hardcoded(const std::string &family_name,
 }
 
 std::string FontManager::find_system_font(const std::string &family_name,
-                                          bool bold, bool italic) {
+                                          bool bold, bool italic,
+                                          bool /*allow_fallback*/) {
     // 1. Try CoreText
     std::string result = find_font_coretext(family_name, bold, italic);
     if (!result.empty()) {

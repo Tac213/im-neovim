@@ -44,12 +44,27 @@ static bool is_wsl() {
 // Fontconfig CLI
 // ---------------------------------------------------------------------------
 
-/// Run fontconfig CLI to find a font file.
-/// Uses fc-match with format string to get the file path.
-static std::string fc_match(const std::string& pattern) {
-    std::string cmd = "fc-match -f '%{file}' '" + pattern + "' 2>/dev/null";
+/// Run fontconfig CLI to find a font file for the given family+style.
+/// Fontconfig's fc-match always returns a "best match" — even when the
+/// requested family doesn't exist, it silently falls back to the system
+/// default (e.g. DejaVu Sans).  To guard against this, we verify that the
+/// returned family name matches the requested one.
+static std::string fc_match(const std::string& family, bool bold, bool italic) {
+    // Build the fc-match pattern from family + style
+    std::string pattern = "'" + family + "'";
+    if (bold && italic) {
+        pattern = "'" + family + ":Bold:Italic'";
+    } else if (bold) {
+        pattern = "'" + family + ":Bold'";
+    } else if (italic) {
+        pattern = "'" + family + ":Italic'";
+    }
+
+    // Request both file path and family name in output (two lines)
+    std::string cmd =
+        "fc-match -f '%{file}\\n%{family}\\n' " + pattern + " 2>/dev/null";
     std::array<char, 1024> buffer{};
-    std::string result;
+    std::string output;
 
     FILE* pipe = popen(cmd.c_str(), "r"); // NOLINT(cert-env33-c)
     if (!pipe) {
@@ -58,7 +73,7 @@ static std::string fc_match(const std::string& pattern) {
 
     while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) !=
            nullptr) {
-        result += buffer.data();
+        output += buffer.data();
     }
 
     int rc = pclose(pipe);
@@ -66,22 +81,43 @@ static std::string fc_match(const std::string& pattern) {
         return "";
     }
 
-    // Trim trailing whitespace
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r' ||
-                               result.back() == ' ')) {
-        result.pop_back();
-    }
-
-    // Validate the result is a real file path
-    if (result.empty() || result[0] != '/') {
+    // Parse the two output lines: first is file path, second is family name
+    size_t nl = output.find('\n');
+    if (nl == std::string::npos) {
         return "";
     }
 
-    if (!std::filesystem::exists(result)) {
+    std::string file_path = output.substr(0, nl);
+    std::string matched_family = output.substr(nl + 1);
+
+    // Trim trailing whitespace from both lines
+    while (!file_path.empty() &&
+           (file_path.back() == '\n' || file_path.back() == '\r' ||
+            file_path.back() == ' ')) {
+        file_path.pop_back();
+    }
+    while (!matched_family.empty() &&
+           (matched_family.back() == '\n' || matched_family.back() == '\r' ||
+            matched_family.back() == ' ')) {
+        matched_family.pop_back();
+    }
+
+    // Guard 1: file path must be absolute and exist
+    if (file_path.empty() || file_path[0] != '/') {
+        return "";
+    }
+    if (!std::filesystem::exists(file_path)) {
         return "";
     }
 
-    return result;
+    // Guard 2: fontconfig silently falls back to a default font when the
+    // requested family isn't available.  Reject if the returned family
+    // doesn't match the one we asked for.
+    if (matched_family != family) {
+        return "";
+    }
+
+    return file_path;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,16 +322,19 @@ static std::vector<std::string> get_fallback_families(bool wsl_env) {
 // ---------------------------------------------------------------------------
 
 std::string FontManager::find_system_font(const std::string& family_name,
-                                          bool bold, bool italic) {
+                                          bool bold, bool italic,
+                                          bool allow_fallback) {
     bool wsl = is_wsl();
     bool is_regular = !bold && !italic;
 
     // Only walk the family fallback chain for the regular (non-styled)
-    // lookup.  For bold / italic / bold-italic we stick to the originally
+    // lookup, and only when allow_fallback is true (guifont loads use
+    // exact matching — the guifont comma-list handles fallback).
+    // For bold / italic / bold-italic we always stick to the originally
     // requested family so that all four variants come from the *same*
     // typeface — mixing families would look terrible.
     std::vector<std::string> families_to_try;
-    if (is_regular) {
+    if (is_regular && allow_fallback) {
         families_to_try = get_fallback_families(wsl);
         // Make sure the caller's explicit choice is tried first
         if (families_to_try.empty() || families_to_try[0] != family_name) {
@@ -306,17 +345,8 @@ std::string FontManager::find_system_font(const std::string& family_name,
     }
 
     for (const auto& family : families_to_try) {
-        // 1. Try fontconfig CLI
-        std::string fc_pattern = family;
-        if (bold && italic) {
-            fc_pattern += ":Bold:Italic";
-        } else if (bold) {
-            fc_pattern += ":Bold";
-        } else if (italic) {
-            fc_pattern += ":Italic";
-        }
-
-        std::string result = fc_match(fc_pattern);
+        // 1. Try fontconfig CLI (with family-name verification)
+        std::string result = fc_match(family, bold, italic);
         if (!result.empty()) {
             return result;
         }

@@ -14,6 +14,22 @@
 
 namespace ImNeovim {
 class NvimRequest;
+
+/// Parsed representation of a Neovim guifont / guifontwide string.
+/// Format: "FamilyName:hNN[:b][:i]"  (e.g. "Fira Code:h12:b")
+struct ParsedFont {
+    std::string family;
+    float size_pt{14.0f};
+    bool bold{false};
+    bool italic{false};
+
+    bool operator==(const ParsedFont& other) const {
+        return family == other.family && size_pt == other.size_pt &&
+               bold == other.bold && italic == other.italic;
+    }
+    bool operator!=(const ParsedFont& other) const { return !(*this == other); }
+};
+
 class NvimWidget : public TextWidget,
                    public std::enable_shared_from_this<NvimWidget> {
   public:
@@ -23,6 +39,10 @@ class NvimWidget : public TextWidget,
     void open_file(const std::string& path);
     void render() override;
     void resize(uint32_t cols, uint32_t rows);
+
+    /// Process any pending font reload (Clear atlas + load new fonts).
+    /// Must be called between frames, before ImGui::NewFrame().
+    void process_pending_font_reload();
 
     // Docking support
     void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }
@@ -57,6 +77,11 @@ class NvimWidget : public TextWidget,
     void _notify_nvim_resize(uint32_t cols, uint32_t rows);
     void _render_grid(ImDrawList* draw_list, const ImVec2& pos,
                       float char_width, float line_height);
+
+    /* Font management */
+    static ParsedFont _parse_guifont(const std::string& guifont_str);
+    void _check_font_reload_needed();
+    void _execute_font_reload();
 
     /* Redraw operation handlers */
     void _redraw_resize(msgpack::object_array& args);
@@ -227,6 +252,13 @@ class NvimWidget : public TextWidget,
     std::string m_requested_font_wide;
     int32_t m_linespace{0};
     bool m_suspend_pending{false};
+
+    // Font reload state
+    ParsedFont m_current_font;
+    ParsedFont m_current_font_wide;
+    ParsedFont m_pending_font;      // Font to load in next reload cycle
+    ParsedFont m_pending_font_wide; // Wide font to load in next reload cycle
+    bool m_font_reload_pending{false};
 
     // Popup menu state
     std::vector<PopupMenuEntry> m_popup_items;

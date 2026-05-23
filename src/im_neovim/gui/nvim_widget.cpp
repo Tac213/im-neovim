@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <im_app/file_system.h>
+#include <im_app/font_manager.h>
 #include <imgui_internal.h>
 
 namespace ImNeovim {
@@ -173,6 +174,14 @@ void NvimWidget::render() {
         _spawn_nvim();
     }
 
+    // Process any pending font reload BEFORE any ImGui window operations.
+    // Font atlas clear/reload must happen outside of
+    // ImGui::NewFrame()..EndFrame().
+    // _check_font_reload_needed() only parses/detects changes.
+    // The actual Clear()+Load is done by process_pending_font_reload()
+    // from LayerMainWindow::on_update() (between frames).
+    _check_font_reload_needed();
+
     _check_font_size_changed();
     bool window_created = TextWidget::setup_window();
 
@@ -215,11 +224,21 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
 
     // Draw all cells
     for (uint32_t y = 0; y < grid.height; y++) {
+        bool skip_next = false;
         for (uint32_t x = 0; x < grid.width; x++) {
+            // Skip the filler cell after a double-width character
+            if (skip_next) {
+                skip_next = false;
+                continue;
+            }
+
             ImVec2 char_pos(pos.x + x * char_width,
                             pos.y + y * effective_line_height);
-            TextWidget::render_cell(draw_list, grid.cells[y][x], char_pos,
-                                    char_width, line_height);
+            bool wide_rendered = TextWidget::render_cell(
+                draw_list, grid.cells[y][x], char_pos, char_width, line_height);
+            if (wide_rendered) {
+                skip_next = true;
+            }
         }
     }
 
@@ -253,9 +272,21 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
             ImVec2 cursor_pos(pos.x + m_state.cursor_x * char_width,
                               pos.y + m_state.cursor_y * effective_line_height);
 
+            // Determine if the character under cursor is wide
+            bool cursor_is_wide = false;
+            ScreenCell cursor_cell;
+            if (m_state.cursor_y < grid.height &&
+                m_state.cursor_x < grid.width) {
+                cursor_cell = grid.cells[m_state.cursor_y][m_state.cursor_x];
+                cursor_is_wide = TextWidget::is_wide_char(cursor_cell.chars[0]);
+            }
+
+            float cursor_width =
+                cursor_is_wide ? char_width * 2.0f : char_width;
+
             // Cursor rect based on shape and cell percentage
             ImVec2 cursor_min = cursor_pos;
-            ImVec2 cursor_max(cursor_pos.x + char_width,
+            ImVec2 cursor_max(cursor_pos.x + cursor_width,
                               cursor_pos.y + line_height);
 
             float pct = static_cast<float>(m_cursor_cell_percentage) / 100.0f;
@@ -264,7 +295,7 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
                 cursor_min.y = cursor_pos.y + line_height * (1.0f - pct);
                 break;
             case CursorShape::Vertical:
-                cursor_max.x = cursor_pos.x + char_width * pct;
+                cursor_max.x = cursor_pos.x + cursor_width * pct;
                 break;
             case CursorShape::Block:
                 // Full cell, no adjustment needed
@@ -277,12 +308,6 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
             // Dim cursor when busy
             if (m_busy) {
                 cursor_color.w = 0.4f;
-            }
-
-            ScreenCell cursor_cell;
-            if (m_state.cursor_y < grid.height &&
-                m_state.cursor_x < grid.width) {
-                cursor_cell = grid.cells[m_state.cursor_y][m_state.cursor_x];
             }
 
             if (cursor_cell.chars[0] != '\0') {
@@ -1031,14 +1056,28 @@ void NvimWidget::_redraw_option_set(msgpack::object_array& args) {
     if (option == "guifont") {
         if (val.type == msgpack::type::STR) {
             m_requested_font = val.as<std::string>();
-            LOG_DEBUG("guifont requested: {} (font reload deferred)",
-                      m_requested_font);
+            LOG_DEBUG("guifont requested: {}", m_requested_font);
+
+            // Parse and compare against current font to decide if reload needed
+            ParsedFont parsed = _parse_guifont(m_requested_font);
+            if (parsed.family.empty()) {
+                parsed.family = ImApp::FontManager::get_default_font_family();
+                parsed.size_pt = 14.0f;
+            }
+            if (parsed != m_current_font) {
+                m_font_reload_pending = true;
+            }
         }
     } else if (option == "guifontwide") {
         if (val.type == msgpack::type::STR) {
             m_requested_font_wide = val.as<std::string>();
-            LOG_DEBUG("guifontwide requested: {} (deferred)",
-                      m_requested_font_wide);
+            LOG_DEBUG("guifontwide requested: {}", m_requested_font_wide);
+
+            // Parse and compare against current wide font
+            ParsedFont parsed = _parse_guifont(m_requested_font_wide);
+            if (parsed != m_current_font_wide) {
+                m_font_reload_pending = true;
+            }
         }
     } else if (option == "linespace") {
         if (val.type == msgpack::type::POSITIVE_INTEGER) {
@@ -1753,6 +1792,226 @@ void NvimWidget::_check_font_size_changed() {
         m_last_font_size = current_font_size;
         resize(m_state.col, m_state.row);
     }
+}
+
+// Parse a single guifont entry: "FamilyName[:hNN[:b][:i]]"
+// Neovim has already resolved Vimscript escaping (\, etc.) before
+// sending option_set, so we only need to handle commas as separators.
+static ParsedFont parse_guifont_entry(const std::string& entry) {
+    ParsedFont result;
+
+    // Find the last ":h" delimiter (family name might contain colons).
+    const std::string& s = entry;
+    size_t h_pos = std::string::npos;
+    for (size_t i = s.length(); i >= 2; i--) {
+        if (s[i - 2] == ':' && s[i - 1] == 'h') {
+            h_pos = i - 2;
+            break;
+        }
+    }
+
+    if (h_pos != std::string::npos) {
+        result.family = s.substr(0, h_pos);
+        // Trim trailing whitespace from family name
+        while (!result.family.empty() && result.family.back() == ' ') {
+            result.family.pop_back();
+        }
+
+        // Parse modifiers starting from ":h" position
+        std::string mods = s.substr(h_pos);
+        size_t h_end = 2; // skip ":h"
+        while (h_end < mods.length() && mods[h_end] >= '0' &&
+               mods[h_end] <= '9') {
+            h_end++;
+        }
+        if (h_end > 2) {
+            result.size_pt = std::stof(mods.substr(2, h_end - 2));
+        }
+
+        std::string remaining = mods.substr(h_end);
+        result.bold = (remaining.find(":b") != std::string::npos);
+        result.italic = (remaining.find(":i") != std::string::npos);
+    } else {
+        // No ":h" found — use the whole string as family, keep default size
+        result.family = s;
+    }
+
+    // Trim leading/trailing whitespace from family
+    size_t start = result.family.find_first_not_of(" \t");
+    size_t end = result.family.find_last_not_of(" \t");
+    if (start != std::string::npos && end != std::string::npos) {
+        result.family = result.family.substr(start, end - start + 1);
+    } else {
+        result.family.clear();
+    }
+
+    return result;
+}
+
+// Split a guifont string by commas into individual entries.
+static std::vector<ParsedFont>
+parse_guifont_entries(const std::string& guifont_str) {
+    std::vector<ParsedFont> entries;
+    if (guifont_str.empty()) {
+        return entries;
+    }
+
+    size_t start = 0;
+    while (start < guifont_str.length()) {
+        size_t comma = guifont_str.find(',', start);
+        std::string entry = guifont_str.substr(start, comma - start);
+        entries.push_back(parse_guifont_entry(entry));
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+
+    return entries;
+}
+
+ParsedFont NvimWidget::_parse_guifont(const std::string& guifont_str) {
+    auto entries = parse_guifont_entries(guifont_str);
+    if (entries.empty()) {
+        return ParsedFont{};
+    }
+    return entries[0];
+}
+
+void NvimWidget::_check_font_reload_needed() {
+    if (!m_font_reload_pending) {
+        return;
+    }
+
+    // Parse the requested fonts (detect phase only — no atlas manipulation)
+    ParsedFont new_font = _parse_guifont(m_requested_font);
+    ParsedFont new_wide = _parse_guifont(m_requested_font_wide);
+
+    // If no explicit guifont set, keep the current family/size
+    if (new_font.family.empty()) {
+        new_font = m_current_font;
+        if (new_font.family.empty()) {
+            new_font.family = ImApp::FontManager::get_default_font_family();
+            new_font.size_pt = 14.0f;
+        }
+    }
+
+    // If the parsed values match what's currently loaded, skip reload
+    if (new_font == m_current_font && new_wide == m_current_font_wide) {
+        LOG_DEBUG("Font reload skipped: requested font matches current");
+        m_font_reload_pending = false;
+        return;
+    }
+
+    // Store the pending font for later execution (between frames)
+    m_pending_font = new_font;
+    m_pending_font_wide = new_wide;
+}
+
+void NvimWidget::process_pending_font_reload() {
+    if (!m_font_reload_pending) {
+        return;
+    }
+
+    // Compute the pending font from the raw requested strings.
+    // This must happen here (in on_update, between frames) because
+    // _redraw_option_set() may have set the flag during libuv processing
+    // in the same on_update phase, before _check_font_reload_needed()
+    // has had a chance to run in render().
+    m_pending_font = _parse_guifont(m_requested_font);
+    m_pending_font_wide = _parse_guifont(m_requested_font_wide);
+
+    if (m_pending_font.family.empty()) {
+        m_pending_font = m_current_font;
+        if (m_pending_font.family.empty()) {
+            m_pending_font.family =
+                ImApp::FontManager::get_default_font_family();
+            m_pending_font.size_pt = 14.0f;
+        }
+    }
+
+    // Skip if nothing changed
+    if (m_pending_font == m_current_font &&
+        m_pending_font_wide == m_current_font_wide) {
+        LOG_DEBUG("Font reload skipped: requested font matches current");
+        m_font_reload_pending = false;
+        return;
+    }
+
+    _execute_font_reload();
+}
+
+void NvimWidget::_execute_font_reload() {
+    // Parse the full fallback list from the raw Neovim option strings.
+    // Neovim sends comma-separated font names: "Font1:h12,Font2:h12,..."
+    std::vector<ParsedFont> regular_entries =
+        parse_guifont_entries(m_requested_font);
+    std::vector<ParsedFont> wide_entries =
+        parse_guifont_entries(m_requested_font_wide);
+
+    // If no explicit guifont set, use the current or platform default.
+    if (regular_entries.empty()) {
+        regular_entries.push_back(m_current_font);
+        if (regular_entries[0].family.empty()) {
+            regular_entries[0].family =
+                ImApp::FontManager::get_default_font_family();
+            regular_entries[0].size_pt = 14.0f;
+        }
+    }
+
+    LOG_INFO("Reloading fonts: {} regular candidate(s), {} wide candidate(s)",
+             regular_entries.size(), wide_entries.size());
+
+    // Save current font in case we need to revert
+    ParsedFont prev_font = m_current_font;
+    ParsedFont prev_wide = m_current_font_wide;
+
+    // Try each regular-font entry in fallback order.
+    bool loaded = false;
+    for (const auto& entry : regular_entries) {
+        // Use the first wide entry (or none) for this attempt.
+        ParsedFont wide_entry;
+        if (!wide_entries.empty()) {
+            wide_entry = wide_entries[0];
+        }
+
+        LOG_DEBUG("Trying font: '{}' ({}pt, b={}, i={})", entry.family,
+                  entry.size_pt, entry.bold, entry.italic);
+
+        loaded = ImApp::FontManager::load_font_with_wide(
+            entry.family, entry.size_pt, entry.bold, entry.italic,
+            wide_entry.family, wide_entry.size_pt);
+
+        if (loaded) {
+            // Success
+            m_current_font = entry;
+            m_current_font_wide = wide_entry;
+            break;
+        }
+
+        LOG_DEBUG("Font '{}' not found, trying next fallback...", entry.family);
+    }
+
+    if (!loaded) {
+        LOG_WARN("No font in the fallback list could be loaded, reverting "
+                 "to previous font");
+        // If the previous font was never explicitly set (first load),
+        // fall back to the platform default.
+        if (prev_font.family.empty()) {
+            prev_font.family = ImApp::FontManager::get_default_font_family();
+            prev_font.size_pt = 14.0f;
+        }
+        // Revert to the previous font
+        ImApp::FontManager::load_font_with_wide(
+            prev_font.family, prev_font.size_pt, prev_font.bold,
+            prev_font.italic, prev_wide.family, prev_wide.size_pt);
+        // Keep the previous state
+    }
+
+    // Recalculate grid dimensions for the new font metrics
+    resize(m_state.col, m_state.row);
+
+    m_font_reload_pending = false;
 }
 
 void NvimWidget::_handle_nvim_resize() {

@@ -75,7 +75,41 @@ void TextWidget::check_font_size_changed() {
     }
 }
 
-void TextWidget::render_cell(ImDrawList* draw_list, const ScreenCell& cell,
+bool TextWidget::is_wide_char(uint32_t codepoint) {
+    // East Asian double-width character detection via Unicode block ranges.
+    // Covers CJK Unified Ideographs, Fullwidth Forms, Hiragana, Katakana,
+    // Hangul, and CJK symbols/punctuation.
+    return (codepoint >= 0x1100 && codepoint <= 0x115F) ||  // Hangul Jamo
+           (codepoint >= 0x2329 && codepoint <= 0x232A) ||  // Misc Technical
+           (codepoint >= 0x2E80 && codepoint <= 0x2EFF) ||  // CJK Rad Suppl
+           (codepoint >= 0x2F00 && codepoint <= 0x2FDF) ||  // Kangxi Radicals
+           (codepoint >= 0x2FF0 && codepoint <= 0x2FFF) ||  // Ideographic Desc
+           (codepoint >= 0x3000 && codepoint <= 0x303F) ||  // CJK Symbols/Punct
+           (codepoint >= 0x3040 && codepoint <= 0x309F) ||  // Hiragana
+           (codepoint >= 0x30A0 && codepoint <= 0x30FF) ||  // Katakana
+           (codepoint >= 0x3100 && codepoint <= 0x312F) ||  // Bopomofo
+           (codepoint >= 0x3130 && codepoint <= 0x318F) ||  // Hangul Compat Jamo
+           (codepoint >= 0x3190 && codepoint <= 0x31FF) ||  // Kanbun + Ext
+           (codepoint >= 0x3200 && codepoint <= 0x32FF) ||  // Encl CJK
+           (codepoint >= 0x3300 && codepoint <= 0x33FF) ||  // CJK Compat
+           (codepoint >= 0x3400 && codepoint <= 0x4DBF) ||  // CJK Ext A
+           (codepoint >= 0x4E00 && codepoint <= 0x9FFF) ||  // CJK Unified
+           (codepoint >= 0xA000 && codepoint <= 0xA4CF) ||  // Yi
+           (codepoint >= 0xAC00 && codepoint <= 0xD7AF) ||  // Hangul Syllables
+           (codepoint >= 0xF900 && codepoint <= 0xFAFF) ||  // CJK Compat Ideo
+           (codepoint >= 0xFE10 && codepoint <= 0xFE1F) ||  // Vertical forms
+           (codepoint >= 0xFE30 && codepoint <= 0xFE4F) ||  // CJK Compat Forms
+           (codepoint >= 0xFE50 && codepoint <= 0xFE6F) ||  // Small Form Var
+           (codepoint >= 0xFF01 && codepoint <= 0xFF60) ||  // Fullwidth ASCII
+           (codepoint >= 0xFFE0 && codepoint <= 0xFFE6) ||  // Fullwidth Signs
+           (codepoint >= 0x1F200 && codepoint <= 0x1F2FF) ||// Encl Ideo Suppl
+           (codepoint >= 0x1F300 && codepoint <= 0x1F5FF) ||// Misc Symbols
+           (codepoint >= 0x1F900 && codepoint <= 0x1F9FF) ||// Suppl Symbols
+           (codepoint >= 0x20000 && codepoint <= 0x2FFFF) || // CJK Ext B+
+           (codepoint >= 0x30000 && codepoint <= 0x3FFFF);   // CJK Ext H+
+}
+
+bool TextWidget::render_cell(ImDrawList* draw_list, const ScreenCell& cell,
                              const ImVec2& char_pos, float char_width,
                              float line_height) {
     ImVec4 fg = cell.fg;
@@ -94,12 +128,21 @@ void TextWidget::render_cell(ImDrawList* draw_list, const ScreenCell& cell,
     }
 
     // Draw character
+    bool rendered_wide = false;
     if (cell.width > 0) {
-        // Select appropriate font variant for bold/italic
+        // Determine if the first character is wide (CJK double-width)
+        bool wide_char = is_wide_char(cell.chars[0]);
+        ImFont* wide_font = ImApp::FontManager::get_wide_font();
+
+        // Select appropriate font variant
         const auto& fonts = ImApp::FontManager::get_loaded_fonts();
         ImFont* target_font = fonts.regular;
-        if (cell.bold && cell.italic && fonts.bold_italic &&
-            fonts.bold_italic != fonts.regular) {
+
+        if (wide_char && wide_font) {
+            // Use the separate CJK wide font for double-width characters
+            target_font = wide_font;
+        } else if (cell.bold && cell.italic && fonts.bold_italic &&
+                   fonts.bold_italic != fonts.regular) {
             target_font = fonts.bold_italic;
         } else if (cell.bold && fonts.bold && fonts.bold != fonts.regular) {
             target_font = fonts.bold;
@@ -117,39 +160,47 @@ void TextWidget::render_cell(ImDrawList* draw_list, const ScreenCell& cell,
         for (int i = 0; i < cell.width && i < 4; i++) {
             len += utf8_encode(cell.chars[i], &text[len]);
         }
+
+        // Wide characters span 2 cell widths
+        float render_width = wide_char ? char_width * 2.0f : char_width;
         draw_list->AddText(char_pos, ImGui::ColorConvertFloat4ToU32(fg), text);
 
         if (target_font && target_font != ImGui::GetFont()) {
             ImGui::PopFont();
         }
+
+        rendered_wide = wide_char;
     }
 
     // Draw underline
     if (cell.underline) {
+        float ul_width = rendered_wide ? char_width * 2.0f : char_width;
         draw_list->AddLine(
             ImVec2(char_pos.x, char_pos.y + line_height - 1),
-            ImVec2(char_pos.x + char_width, char_pos.y + line_height - 1),
+            ImVec2(char_pos.x + ul_width, char_pos.y + line_height - 1),
             ImGui::ColorConvertFloat4ToU32(fg));
     }
 
     // Draw undercurl (wavy underline)
     if (cell.undercurl) {
-        // Simple undercurl implementation - draw a wavy line
+        float uc_width = rendered_wide ? char_width * 2.0f : char_width;
         float y = char_pos.y + line_height - 1;
         float wave_amplitude = 2.0f;
-        int segments = static_cast<int>(char_width / 4.0f);
+        int segments = static_cast<int>(uc_width / 4.0f);
         if (segments < 2) {
             segments = 2;
         }
         for (int i = 0; i < segments; i++) {
-            float x1 = char_pos.x + (i * char_width) / segments;
-            float x2 = char_pos.x + ((i + 1) * char_width) / segments;
+            float x1 = char_pos.x + (i * uc_width) / segments;
+            float x2 = char_pos.x + ((i + 1) * uc_width) / segments;
             float y_offset = (i % 2 == 0) ? -wave_amplitude : wave_amplitude;
             draw_list->AddLine(ImVec2(x1, y + y_offset),
                                ImVec2(x2, y - y_offset),
                                ImGui::ColorConvertFloat4ToU32(fg));
         }
     }
+
+    return rendered_wide;
 }
 
 void TextWidget::render_cursor(ImDrawList* draw_list, const ImVec2& cursor_pos,

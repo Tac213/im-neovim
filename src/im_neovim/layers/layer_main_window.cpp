@@ -11,6 +11,14 @@ LayerMainWindow::LayerMainWindow() {
     m_dock_layout = std::make_shared<DockSpaceLayout>();
 }
 
+void LayerMainWindow::on_update() {
+    // Process pending font reloads between frames.
+    // Font atlas Clear()+Load must happen BEFORE ImGui::NewFrame().
+    if (m_nvim) {
+        m_nvim->process_pending_font_reload();
+    }
+}
+
 void LayerMainWindow::on_attach() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigWindowsMoveFromTitleBarOnly = true;
