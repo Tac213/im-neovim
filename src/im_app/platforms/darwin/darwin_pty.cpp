@@ -1,9 +1,12 @@
 #include "darwin_pty.h"
-#include <csignal>  // For SIGTERM
-#include <errno.h>  // For errno
-#include <fcntl.h>  // For O_RDWR, O_RDWR
+#include "im_app/file_system.h"
+#include <csignal> // For SIGTERM
+#include <errno.h> // For errno
+#include <fcntl.h> // For O_RDWR, O_RDWR
+#include <filesystem>
 #include <limits.h> // For PATH_MAX
 #include <pwd.h>    // For getpwuid
+#include <spdlog/sinks/daily_file_sink.h>
 #include <spdlog/spdlog.h>
 #include <stdlib.h>    // For getenv, setenv, unsetenv, realpath
 #include <string.h>    // For strrchr, strcpy, strncpy, strerror
@@ -93,6 +96,19 @@ bool DarwinPseudoTerminal::launch(uint16_t row, uint16_t col) {
         if (slave_fd > STDERR_FILENO) {
             close(slave_fd);
         }
+
+        // After dup2, stdout/stderr point to the PTY slave.
+        // Reinitialize spdlog to write only to the log file so that
+        // log messages don't leak into the terminal data stream.
+        spdlog::drop_all();
+        auto logs_dir =
+            ImApp::FileSystem::local_app_data_path() / "ImApp" / "Logs";
+        std::filesystem::create_directories(logs_dir);
+        auto file_sink = std::make_shared<spdlog::sinks::daily_file_sink_mt>(
+            (logs_dir / "ImApp.log").string(), 2, 30);
+        auto logger = std::make_shared<spdlog::logger>("pty", file_sink);
+        logger->set_level(spdlog::level::debug);
+        spdlog::set_default_logger(logger);
 
         // Configure terminal modes for the slave PTY
         struct termios tios;
@@ -207,9 +223,15 @@ bool DarwinPseudoTerminal::launch(uint16_t row, uint16_t col) {
         spdlog::debug("  argv[0] for child shell (shell_argv0_login): '{}'",
                       args[0] ? args[0] : "(nullptr)");
 #endif
+
+        // Flush buffered log messages before execv() replaces the process
+        // image, otherwise they'd be lost.
+        spdlog::default_logger()->flush();
+
         execv(shell_exec_path_buf, args);
 
         // If execv returns, an error occurred.
+        spdlog::default_logger()->flush();
         spdlog::critical(
             "FATAL: Failed to execv shell '{}' (intended argv[0]='{}'): {}",
             shell_exec_path_buf, args[0] ? args[0] : "(null)", strerror(errno));
