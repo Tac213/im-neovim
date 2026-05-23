@@ -9,7 +9,7 @@ struct KeyMapping {
     std::string_view nvim_name;
 };
 
-constexpr KeyMapping s_special_keys[] = {
+constexpr KeyMapping g_special_keys[] = {
     {ImGuiKey_Tab, "Tab"},
     {ImGuiKey_LeftArrow, "Left"},
     {ImGuiKey_RightArrow, "Right"},
@@ -25,11 +25,16 @@ constexpr KeyMapping s_special_keys[] = {
     {ImGuiKey_Space, "Space"},
     {ImGuiKey_Enter, "Enter"},
     {ImGuiKey_Escape, "Esc"},
-    {ImGuiKey_Keypad0, "k0"},       {ImGuiKey_Keypad1, "k1"},
-    {ImGuiKey_Keypad2, "k2"},       {ImGuiKey_Keypad3, "k3"},
-    {ImGuiKey_Keypad4, "k4"},       {ImGuiKey_Keypad5, "k5"},
-    {ImGuiKey_Keypad6, "k6"},       {ImGuiKey_Keypad7, "k7"},
-    {ImGuiKey_Keypad8, "k8"},       {ImGuiKey_Keypad9, "k9"},
+    {ImGuiKey_Keypad0, "k0"},
+    {ImGuiKey_Keypad1, "k1"},
+    {ImGuiKey_Keypad2, "k2"},
+    {ImGuiKey_Keypad3, "k3"},
+    {ImGuiKey_Keypad4, "k4"},
+    {ImGuiKey_Keypad5, "k5"},
+    {ImGuiKey_Keypad6, "k6"},
+    {ImGuiKey_Keypad7, "k7"},
+    {ImGuiKey_Keypad8, "k8"},
+    {ImGuiKey_Keypad9, "k9"},
     {ImGuiKey_KeypadDecimal, "kPoint"},
     {ImGuiKey_KeypadDivide, "kDivide"},
     {ImGuiKey_KeypadMultiply, "kMultiply"},
@@ -63,8 +68,8 @@ constexpr KeyMapping s_special_keys[] = {
     {ImGuiKey_F24, "F24"},
 };
 
-constexpr size_t s_special_keys_count =
-    sizeof(s_special_keys) / sizeof(s_special_keys[0]);
+constexpr size_t g_special_keys_count =
+    sizeof(g_special_keys) / sizeof(g_special_keys[0]);
 
 // Control characters that are handled as special keys, not text.
 // These come through io.InputQueueCharacters on some backends and should
@@ -147,9 +152,9 @@ static void adjust_mods_for_layout_alt(const ImGuiIO&, std::string&,
 #endif
 
 std::string_view special_key_name(ImGuiKey key) noexcept {
-    for (size_t i = 0; i < s_special_keys_count; i++) {
-        if (s_special_keys[i].imgui_key == key) {
-            return s_special_keys[i].nvim_name;
+    for (size_t i = 0; i < g_special_keys_count; i++) {
+        if (g_special_keys[i].imgui_key == key) {
+            return g_special_keys[i].nvim_name;
         }
     }
     return {};
@@ -193,8 +198,7 @@ std::string modifier_prefix(const ImGuiIO& io) noexcept {
     return prefix;
 }
 
-std::string collect_input(const ImGuiIO& io,
-                           ImGuiKey consumed_key) noexcept {
+std::string collect_input(const ImGuiIO& io, ImGuiKey consumed_key) noexcept {
     std::string result;
 
     // Track which ImGuiKeys we've already handled so we don't double-send
@@ -221,17 +225,16 @@ std::string collect_input(const ImGuiIO& io,
     }
 
     // Pass 1: Special keys via ImGui::IsKeyPressed
-    for (size_t i = 0; i < s_special_keys_count; i++) {
-        ImGuiKey key = s_special_keys[i].imgui_key;
+    for (size_t i = 0; i < g_special_keys_count; i++) {
+        ImGuiKey key = g_special_keys[i].imgui_key;
         if (ImGui::IsKeyPressed(key, false)) {
             int idx = key - ImGuiKey_NamedKey_BEGIN;
-            if (idx >= 0 && idx < ImGuiKey_NamedKey_COUNT &&
-                key_handled[idx]) {
+            if (idx >= 0 && idx < ImGuiKey_NamedKey_COUNT && key_handled[idx]) {
                 continue;
             }
             result += '<';
             result += mods;
-            result += s_special_keys[i].nvim_name;
+            result += g_special_keys[i].nvim_name;
             result += '>';
             if (idx >= 0 && idx < ImGuiKey_NamedKey_COUNT) {
                 key_handled[idx] = true;

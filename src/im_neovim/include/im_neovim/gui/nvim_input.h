@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <imgui.h>
 #include <string>
 #include <string_view>
@@ -31,7 +32,7 @@ std::string prefix_without_modifier(const std::string& prefix,
 // (e.g. to suppress a paste shortcut that was already processed).
 // The returned string is ready to pass to nvim_input().
 std::string collect_input(const ImGuiIO& io,
-                           ImGuiKey consumed_key = ImGuiKey_None) noexcept;
+                          ImGuiKey consumed_key = ImGuiKey_None) noexcept;
 
 // --- Mouse input conversion ---
 
@@ -46,10 +47,9 @@ std::string mouse_event_suffix(bool is_release, bool is_drag) noexcept;
 
 // Build a complete mouse notation string in the format
 // <[mods]ButtonEvent><col,row>.
-std::string mouse_input_string(const std::string& mods,
-                               std::string_view button,
-                               std::string_view event,
-                               int col, int row) noexcept;
+std::string mouse_input_string(const std::string& mods, std::string_view button,
+                               std::string_view event, int col,
+                               int row) noexcept;
 
 // Convert scroll deltas to zero or more mouse scroll notation strings
 // with remainder accumulation for smooth trackpad scrolling.
@@ -58,8 +58,7 @@ std::string mouse_input_string(const std::string& mods,
 // Positive horizontal delta -> ScrollWheelRight
 // Negative horizontal delta -> ScrollWheelLeft
 std::string convert_scroll(float delta_y, float delta_x,
-                           const std::string& mods,
-                           int col, int row,
+                           const std::string& mods, int col, int row,
                            float& rem_y, float& rem_x) noexcept;
 
 } // namespace ImNeovim
