@@ -16,3 +16,9 @@
 [submodule "thirdparty/libvterm"]
 	path = thirdparty/libvterm
 	url = https://github.com/neovim/libvterm.git
+[submodule "thirdparty/stb"]
+	path = thirdparty/stb
+	url = https://github.com/nothings/stb.git
+[submodule "thirdparty/nanosvg"]
+	path = thirdparty/nanosvg
+	url = https://github.com/memononen/nanosvg.git

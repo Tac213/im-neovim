@@ -8,6 +8,7 @@
 #include <Windows.h>
 #include <directx/d3dx12.h>
 #include <dxgi1_6.h>
+#include <unordered_map>
 #include <wrl.h>
 
 namespace ImApp {
@@ -44,6 +45,9 @@ class D3D12Context : public GraphicsContext {
     virtual void swap_buffers() override;
     virtual void on_frame_buffer_size_changed(uint32_t width,
                                               uint32_t height) override;
+    virtual uint64_t create_texture(const uint8_t* pixels, uint32_t width,
+                                    uint32_t height) override;
+    virtual void destroy_texture(uint64_t texture_id) override;
 
     HWND get_hwnd() const { return m_hwnd; }
     ComPtr<ID3D12Device> get_device() const { return m_device; }
@@ -71,7 +75,7 @@ class D3D12Context : public GraphicsContext {
   private:
     static const uint32_t g_frames_in_flight_count = 2;
     static const uint32_t g_back_buffers_count = 2;
-    static const uint32_t g_srv_heap_size = 64;
+    static const uint32_t g_srv_heap_size = 128;
     size_t m_frame_index = 0;
     bool m_use_warp_device = false;
     bool m_swap_chain_tearing_support = false;
@@ -88,6 +92,9 @@ class D3D12Context : public GraphicsContext {
     D3D12_CPU_DESCRIPTOR_HANDLE
     m_main_render_target_descriptors[g_back_buffers_count] = {};
     uint32_t m_rtv_descriptor_size = 0;
+
+    // User-created textures (texture_id → resource for cleanup).
+    std::unordered_map<uint64_t, ComPtr<ID3D12Resource>> m_user_textures;
 
     HWND m_hwnd = nullptr;
 

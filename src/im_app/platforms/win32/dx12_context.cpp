@@ -487,6 +487,172 @@ void get_hardware_adapter(IDXGIFactory1* factory, IDXGIAdapter1** adapter,
     *adapter = adapter1.Detach();
 }
 
+uint64_t D3D12Context::create_texture(const uint8_t* pixels, uint32_t width,
+                                      uint32_t height) {
+    if (width == 0 || height == 0 || !pixels) {
+        spdlog::error("[D3D12Context] Invalid texture parameters: {}x{}", width,
+                      height);
+        return 0;
+    }
+
+    // 1. Create the destination texture resource.
+    D3D12_RESOURCE_DESC tex_desc = {};
+    tex_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    tex_desc.Width = static_cast<UINT>(width);
+    tex_desc.Height = static_cast<UINT>(height);
+    tex_desc.DepthOrArraySize = 1;
+    tex_desc.MipLevels = 1;
+    tex_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    tex_desc.SampleDesc.Count = 1;
+    tex_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    tex_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES heap_props = {};
+    heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    ComPtr<ID3D12Resource> texture;
+    if (FAILED(m_device->CreateCommittedResource(
+            &heap_props, D3D12_HEAP_FLAG_NONE, &tex_desc,
+            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture)))) {
+        spdlog::error("[D3D12Context] Failed to create texture resource");
+        return 0;
+    }
+
+    // 2. Calculate upload buffer size and row layout.
+    UINT64 upload_size = 0;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT num_rows = 0;
+    UINT64 row_size_bytes = 0;
+    m_device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &footprint, &num_rows,
+                                    &row_size_bytes, &upload_size);
+
+    // 3. Create upload buffer.
+    D3D12_HEAP_PROPERTIES upload_heap_props = {};
+    upload_heap_props.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+    D3D12_RESOURCE_DESC upload_desc = {};
+    upload_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    upload_desc.Width = upload_size;
+    upload_desc.Height = 1;
+    upload_desc.DepthOrArraySize = 1;
+    upload_desc.MipLevels = 1;
+    upload_desc.SampleDesc.Count = 1;
+    upload_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    ComPtr<ID3D12Resource> upload_buffer;
+    if (FAILED(m_device->CreateCommittedResource(
+            &upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&upload_buffer)))) {
+        spdlog::error("[D3D12Context] Failed to create upload buffer");
+        return 0;
+    }
+
+    // 4. Copy pixel data row-by-row (respecting D3D12 row pitch).
+    void* mapped = nullptr;
+    if (FAILED(upload_buffer->Map(0, nullptr, &mapped))) {
+        spdlog::error("[D3D12Context] Failed to map upload buffer");
+        return 0;
+    }
+    const size_t src_row_pitch = static_cast<size_t>(width) * 4;
+    for (int y = 0; y < height; y++) {
+        memcpy(static_cast<uint8_t*>(mapped) + y * footprint.Footprint.RowPitch,
+               pixels + y * src_row_pitch, src_row_pitch);
+    }
+    upload_buffer->Unmap(0, nullptr);
+
+    // 5. Execute a one-shot copy command on the GPU.
+    ComPtr<ID3D12CommandAllocator> cmd_allocator;
+    if (FAILED(m_device->CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmd_allocator)))) {
+        spdlog::error("[D3D12Context] Failed to create command allocator");
+        return 0;
+    }
+
+    ComPtr<ID3D12GraphicsCommandList> cmd_list;
+    if (FAILED(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                           cmd_allocator.Get(), nullptr,
+                                           IID_PPV_ARGS(&cmd_list)))) {
+        spdlog::error("[D3D12Context] Failed to create command list");
+        return 0;
+    }
+
+    D3D12_TEXTURE_COPY_LOCATION dst_loc = {};
+    dst_loc.pResource = texture.Get();
+    dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst_loc.SubresourceIndex = 0;
+
+    D3D12_TEXTURE_COPY_LOCATION src_loc = {};
+    src_loc.pResource = upload_buffer.Get();
+    src_loc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    src_loc.PlacedFootprint = footprint;
+
+    cmd_list->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, nullptr);
+
+    // Transition to PIXEL_SHADER_RESOURCE for reading by the shader.
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = texture.Get();
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    cmd_list->ResourceBarrier(1, &barrier);
+
+    cmd_list->Close();
+
+    ID3D12CommandList* cmd_lists[] = {cmd_list.Get()};
+    m_command_queue->ExecuteCommandLists(1, cmd_lists);
+
+    // Wait for the copy to finish on the GPU.
+    uint64_t upload_fence_value = ++m_fence_last_signaled_value;
+    m_command_queue->Signal(m_fence.Get(), upload_fence_value);
+    if (m_fence->GetCompletedValue() < upload_fence_value) {
+        m_fence->SetEventOnCompletion(upload_fence_value, m_fence_event);
+        ::WaitForSingleObject(m_fence_event, INFINITE);
+    }
+
+    // 6. Allocate an SRV descriptor.
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = {};
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = {};
+    m_srv_heap_allocator.alloc(&cpu_handle, &gpu_handle);
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+    srv_desc.Format = tex_desc.Format;
+    srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv_desc.Texture2D.MipLevels = 1;
+
+    m_device->CreateShaderResourceView(texture.Get(), &srv_desc, cpu_handle);
+
+    uint64_t tex_id = gpu_handle.ptr;
+
+    // Track the texture resource so we can release it on destroy.
+    m_user_textures[tex_id] = texture;
+
+    return tex_id;
+}
+
+void D3D12Context::destroy_texture(uint64_t texture_id) {
+    if (texture_id == 0) {
+        return;
+    }
+    // Release the texture resource.
+    m_user_textures.erase(texture_id);
+
+    // Free the SRV descriptor.
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = {};
+    gpu_handle.ptr = texture_id;
+    // Reconstruct CPU handle using the same index offset.
+    auto& alloc = m_srv_heap_allocator;
+    int32_t idx =
+        static_cast<int32_t>((gpu_handle.ptr - alloc.heap_start_gpu.ptr) /
+                             alloc.heap_handle_increment);
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle = {};
+    cpu_handle.ptr =
+        alloc.heap_start_cpu.ptr + idx * alloc.heap_handle_increment;
+    alloc.free(cpu_handle, gpu_handle);
+}
+
 void DescriptorHeapAllocator::create(ComPtr<ID3D12Device> device,
                                      ComPtr<ID3D12DescriptorHeap> in_heap) {
     if (heap || !free_indices.empty()) {

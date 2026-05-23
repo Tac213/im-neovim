@@ -50,6 +50,11 @@ class Application {
         layer->on_attach();
     }
 
+    /// Access the current graphics context (valid after initialization).
+    std::shared_ptr<GraphicsContext> get_graphics_context() const {
+        return m_graphics_context;
+    }
+
   private:
     AppSpec m_app_spec;
     std::vector<std::shared_ptr<Layer>> m_layer_stack;

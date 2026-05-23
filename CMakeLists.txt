@@ -23,6 +23,7 @@ set(im_app_public_files
     "${public_dir}/im_app/file_system.h"
     "${public_dir}/im_app/pty.h"
     "${public_dir}/im_app/font_manager.h"
+    "${public_dir}/im_app/image_manager.h"
 )
 
 set(im_app_private_files
@@ -31,6 +32,7 @@ set(im_app_private_files
     "${im_app_private_header_dir}/im_app/window.h"
     "${im_app_dir}/application.cpp"
     "${im_app_dir}/font_manager.cpp"
+    "${im_app_dir}/image_manager.cpp"
 )
 
 set(im_app_platform_specific_files)
@@ -107,6 +109,8 @@ target_include_directories(
     "${public_dir}"
     PRIVATE
     "${im_app_private_header_dir}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb"
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/nanosvg/src"
 )
 
 target_link_libraries(

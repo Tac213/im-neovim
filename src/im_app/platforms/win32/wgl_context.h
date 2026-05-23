@@ -16,6 +16,9 @@ class WGLContext : public GraphicsContext {
     virtual void swap_buffers() override;
     virtual void on_frame_buffer_size_changed(uint32_t width,
                                               uint32_t height) override {}
+    virtual uint64_t create_texture(const uint8_t* pixels, uint32_t width,
+                                    uint32_t height) override;
+    virtual void destroy_texture(uint64_t texture_id) override;
 
     bool create_device(HWND hwnd, HDC& hdc);
     static void cleanup_device(HWND hwnd, HDC& hdc);

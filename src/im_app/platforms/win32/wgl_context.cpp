@@ -100,4 +100,28 @@ bool WGLContext::make_current(HDC& hdc) { return ::wglMakeCurrent(hdc, m_hrc); }
 bool WGLContext::make_current() { return ::wglMakeCurrent(m_hdc, m_hrc); }
 
 bool WGLContext::swap_buffers(HDC& hdc) { return ::SwapBuffers(hdc); }
+
+uint64_t WGLContext::create_texture(const uint8_t* pixels, uint32_t width,
+                                    uint32_t height) {
+    GLuint gl_tex = 0;
+    glGenTextures(1, &gl_tex);
+    if (gl_tex == 0) {
+        spdlog::error("[WGLContext] glGenTextures failed");
+        return 0;
+    }
+    glBindTexture(GL_TEXTURE_2D, gl_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return static_cast<uint64_t>(gl_tex);
+}
+
+void WGLContext::destroy_texture(uint64_t texture_id) {
+    GLuint gl_tex = static_cast<GLuint>(texture_id);
+    glDeleteTextures(1, &gl_tex);
+}
 } // namespace ImApp
