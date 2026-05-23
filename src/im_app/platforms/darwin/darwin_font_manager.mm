@@ -21,10 +21,11 @@ static std::string find_font_coretext(const std::string &family_name, bool bold,
         NSMutableDictionary *traits_dict = [NSMutableDictionary dictionary];
         if (bold) {
             traits_dict[(NSString *)kCTFontWeightTrait] =
-                @(kCTFontWeightBold); // approximate
+                @(0.7); // approximate (kCTFontWeightBold equivalent)
         }
         if (italic) {
-            traits_dict[(NSString *)kCTFontSlantTrait] = @(kCTFontSlantItalic);
+            traits_dict[(NSString *)kCTFontSlantTrait] =
+                @(1.0); // kCTFontSlantItalic equivalent
         }
 
         NSDictionary *attributes = @{
