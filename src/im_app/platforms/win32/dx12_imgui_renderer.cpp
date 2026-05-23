@@ -1,7 +1,6 @@
 #include "dx12_imgui_renderer.h"
 #include "dx12_context.h"
 #include "im_app/font_manager.h"
-#include "im_app/image_manager.h"
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
@@ -150,13 +149,10 @@ void D3D12ImGuiRenderer::
     init_info.UserData = srv_heap_allocator;
     ImGui_ImplDX12_Init(&init_info);
 
-    // Metal and D3D12 texture origin is top-left — stb_image needs to flip
-    // so images appear right-side-up.
-    ImageManager::set_flip_vertically_on_load(true);
-
     // Load Fonts
     // - Using FontManager to load the platform default system font.
-    // - Falls back to ImGui default font (ProggyClean) if system font is unavailable.
+    // - Falls back to ImGui default font (ProggyClean) if system font is
+    // unavailable.
     ImFont* font = FontManager::load_default_font(io.Fonts, 14.0f).regular;
     if (!font) {
         io.Fonts->AddFontDefault();
