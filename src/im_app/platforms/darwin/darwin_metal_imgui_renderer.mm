@@ -1,7 +1,6 @@
 #include "darwin_metal_imgui_renderer.h"
-#include "metal_context.h"
 #include "im_app/font_manager.h"
-#include "im_app/image_manager.h"
+#include "metal_context.h"
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_metal.h>
 
@@ -124,14 +123,11 @@ void DarwinMetalImGuiRenderer::_initialize() {
     id<MTLDevice> device = context->get_device();
     ImGui_ImplMetal_Init(device);
 
-    // Metal and D3D12 texture origin is top-left — stb_image needs to flip
-    // so images appear right-side-up.
-    ImageManager::set_flip_vertically_on_load(true);
-
     // Load Fonts
     // - Using FontManager to load the platform default system font.
-    // - Falls back to ImGui default font (ProggyClean) if system font is unavailable.
-    ImFont* font = FontManager::load_default_font(io.Fonts, 14.0f).regular;
+    // - Falls back to ImGui default font (ProggyClean) if system font is
+    // unavailable.
+    ImFont *font = FontManager::load_default_font(io.Fonts, 14.0f).regular;
     if (!font) {
         io.Fonts->AddFontDefault();
     }
