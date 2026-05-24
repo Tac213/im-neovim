@@ -53,13 +53,6 @@ void ImageManager::register_embedded_image(const std::string& path,
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-static bool ends_with(const std::string& str, const std::string& suffix) {
-    if (suffix.size() > str.size()) {
-        return false;
-    }
-    return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 static std::vector<uint8_t> read_file(const std::string& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
@@ -100,18 +93,18 @@ Image ImageManager::load(const std::string& path, uint32_t svg_width,
         auto& registry = get_embedded_registry();
         auto it = registry.find(path);
         if (it != registry.end()) {
-            if (ends_with(path, ".svg")) {
+            if (path.ends_with(".svg")) {
                 uint32_t w = svg_width > 0 ? svg_width : 32;
                 uint32_t h = svg_height > 0 ? svg_height : 32;
-                return load_svg_from_memory(it->second.data, it->second.size,
-                                            w, h);
+                return load_svg_from_memory(it->second.data, it->second.size, w,
+                                            h);
             }
             return load_image_from_memory(it->second.data, it->second.size);
         }
     }
 
     // 2. If the path ends with ".svg", treat as SVG.
-    if (ends_with(path, ".svg")) {
+    if (path.ends_with(".svg")) {
         uint32_t w = svg_width > 0 ? svg_width : 32;
         uint32_t h = svg_height > 0 ? svg_height : 32;
         return load_svg(path, w, h);
@@ -138,9 +131,9 @@ Image ImageManager::load_image_from_memory(const unsigned char* data,
     int width = 0;
     int height = 0;
     int channels = 0;
-    unsigned char* pixels = stbi_load_from_memory(
-        data, static_cast<int>(size), &width, &height, &channels,
-        4); // Force RGBA
+    unsigned char* pixels = stbi_load_from_memory(data, static_cast<int>(size),
+                                                  &width, &height, &channels,
+                                                  4); // Force RGBA
 
     if (!pixels) {
         spdlog::error("[ImageManager] Failed to decode image: {}",
@@ -177,7 +170,8 @@ void ImageManager::set_flip_vertically_on_load(bool flip) {
     stbi_set_flip_vertically_on_load(flip ? 1 : 0);
 }
 
-Image ImageManager::load_svg(const std::string& path, uint32_t width, uint32_t height) {
+Image ImageManager::load_svg(const std::string& path, uint32_t width,
+                             uint32_t height) {
     auto file_data = read_file(path);
     if (file_data.empty()) {
         return {};
@@ -186,12 +180,12 @@ Image ImageManager::load_svg(const std::string& path, uint32_t width, uint32_t h
     std::string svg_str(reinterpret_cast<const char*>(file_data.data()),
                         file_data.size());
     return load_svg_from_memory(
-        reinterpret_cast<const unsigned char*>(svg_str.c_str()),
-        svg_str.size(), width, height);
+        reinterpret_cast<const unsigned char*>(svg_str.c_str()), svg_str.size(),
+        width, height);
 }
 
-Image ImageManager::load_svg_from_memory(const unsigned char* data,
-                                         size_t size, uint32_t width, uint32_t height) {
+Image ImageManager::load_svg_from_memory(const unsigned char* data, size_t size,
+                                         uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) {
         spdlog::error("[ImageManager] Invalid SVG dimensions: {}x{}", width,
                       height);
@@ -227,8 +221,8 @@ Image ImageManager::load_svg_from_memory(const unsigned char* data,
         raster_h = static_cast<int>(height);
     }
 
-    std::vector<unsigned char> pixels(
-        static_cast<size_t>(raster_w) * static_cast<size_t>(raster_h) * 4);
+    std::vector<unsigned char> pixels(static_cast<size_t>(raster_w) *
+                                      static_cast<size_t>(raster_h) * 4);
     nsvgRasterize(rast, svg_image, 0, 0, scale, pixels.data(), raster_w,
                   raster_h, raster_w * 4);
 
@@ -248,8 +242,7 @@ Image ImageManager::load_svg_from_memory(const unsigned char* data,
     result.height = uh;
 
     if (result.texture_id == 0) {
-        spdlog::error(
-            "[ImageManager] Failed to create GPU texture from SVG");
+        spdlog::error("[ImageManager] Failed to create GPU texture from SVG");
     }
     return result;
 }
