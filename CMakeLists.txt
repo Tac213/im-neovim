@@ -196,13 +196,13 @@ set(im_neovim_private_files
     "${im_neovim_dir}/layers/layer_main_window.cpp"
 )
 
-add_executable(im_neovim
+add_executable(imnvim
     ${im_neovim_private_files}
 )
-add_executable(ImNeovim::App ALIAS im_neovim)
+add_executable(ImNvim::App ALIAS imnvim)
 
 target_link_libraries(
-    im_neovim
+    imnvim
     PRIVATE
     ImApp::ImApp
     libvterm
@@ -212,13 +212,39 @@ target_link_libraries(
 )
 
 target_include_directories(
-    im_neovim
+    imnvim
     PRIVATE
     ${im_neovim_private_header_dir}
 )
 
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    set_target_properties(imnvim PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "ImNeovim"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "nvim.icns"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/assets/Info.plist"
+    )
+    set(icon_file "${CMAKE_CURRENT_SOURCE_DIR}/assets/nvim.icns")
+    target_sources(imnvim PRIVATE "${icon_file}")
+    set_source_files_properties("${icon_file}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
+
+    # Bundle the Neovim installation into the .app bundle so it can be
+    # spawned at runtime.  Tolerant of missing source: no-op when nvim
+    # hasn't been built yet.
+    add_custom_command(TARGET imnvim POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/nvim"
+        "$<TARGET_BUNDLE_CONTENT_DIR:imnvim>/Resources/nvim"
+        COMMENT "Bundling Neovim into ImNeovim.app/Contents/Resources/..."
+    )
+endif()
+
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-    target_compile_definitions(im_neovim PRIVATE
+    target_compile_definitions(imnvim PRIVATE
         IM_NVIM_DEBUG=1
     )
 endif()
@@ -229,6 +255,6 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "Release")
     )
 
     if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
-        set_target_properties(im_neovim PROPERTIES WIN32_EXECUTABLE 1)
+        set_target_properties(imnvim PROPERTIES WIN32_EXECUTABLE 1)
     endif()
 endif()

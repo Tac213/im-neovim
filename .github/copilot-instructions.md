@@ -10,7 +10,7 @@ ImNeovim is an ImGui-based graphical user interface for Neovim. It embeds Neovim
 
 - **CMake 3.24+**, **C++23** (MSVC / GCC / Clang)
 - **Use the `Build_CMakeTools` tool** to build — never run raw `cmake --build` in the terminal.
-- Target: `im_neovim` (main executable). The library is `im_app` (static).
+- Target: `imnvim` (main executable). The library is `im_app` (static).
 - Build directory: `build/Debug` (all platforms).
 - First build requires: `git submodule update --init --recursive`
 
@@ -130,4 +130,4 @@ Use `#pragma once` (not `#ifndef` guards).
 - New public headers go in `include/im_app/`, private ones in `src/im_app/interfaces/im_app/`
 - Platform-specific `.cpp` files go in `src/im_app/platforms/<os>/`, not in shared lists
 - The `nanosvg` API takes a mutable `char*` (parses in-place) — use `std::string::data()`, not `.c_str()`
-- For Linux builds: the `im_neovim` executable links `libim_app.a` and all thirdparty libs
+- For Linux builds: the `imnvim` executable links `libim_app.a` and all thirdparty libs

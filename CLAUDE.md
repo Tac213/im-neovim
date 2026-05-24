@@ -58,12 +58,12 @@ ImNeovim is an ImGui-based graphical user interface for Neovim. It embeds Neovim
 git submodule update --init --recursive
 cmake -B build/claude -G "Visual Studio 17 2022" -A x64
 
-# Build im_neovim (skip neovim external project to save time)
-cmake --build build/claude --config Debug --target im_neovim
+# Build imnvim (skip neovim external project to save time)
+cmake --build build/claude --config Debug --target imnvim
 
 # Re-configure only when CMakeLists.txt or dependencies change
 # Otherwise just rebuild:
-cmake --build build/claude --config Debug --target im_neovim
+cmake --build build/claude --config Debug --target imnvim
 ````
 
 ### Building on Linux/macOS
@@ -73,12 +73,12 @@ cmake --build build/claude --config Debug --target im_neovim
 git submodule update --init --recursive
 cmake -B build/claude -DCMAKE_BUILD_TYPE=Debug
 
-# Build im_neovim (skip neovim external project to save time)
-cmake --build build/claude -j$(nproc) --target im_neovim
+# Build imnvim (skip neovim external project to save time)
+cmake --build build/claude -j$(nproc) --target imnvim
 
 # Re-configure only when CMakeLists.txt or dependencies change
 # Otherwise just rebuild:
-cmake --build build/claude -j$(nproc) --target im_neovim
+cmake --build build/claude -j$(nproc) --target imnvim
 ```
 
 ## Key Components
@@ -93,7 +93,7 @@ cmake --build build/claude -j$(nproc) --target im_neovim
 - `file_system.h`: File system operations (platform-specific)
 - `pty.h`: Pseudoterminal interface (for Neovim communication)
 
-### Neovim Integration (im_neovim executable)
+### Neovim Integration (imnvim executable)
 
 - `nvim_widget.h/cpp`: Main widget for embedding Neovim
 - `text_widget.h/cpp`: Text rendering widget
@@ -173,8 +173,8 @@ This project uses strict code formatting and linting rules. All code must pass `
 2. **Formatting code**: Use clang-format (configuration in .clang-format)
 3. **Linting**: Use clang-tidy (configuration in .clang-tidy)
 4. **Debugging**:
-   - On Windows: Use Visual Studio debugger with build/claude/Debug/im_neovim.exe
-   - On Linux/macOS: Use GDB/LLDB with build/claude/im_neovim
+   - On Windows: Use Visual Studio debugger with build/claude/Debug/imnvim.exe
+   - On Linux/macOS: Use GDB/LLDB with build/claude/imnvim
 
 ### Adding New Features
 
