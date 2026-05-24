@@ -249,6 +249,26 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
     )
 endif()
 
+# --- Windows resource file (.rc) — all build types ---
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
+    # Generate the .rc file with absolute icon path.
+    set(IMNVIM_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/nvim.ico")
+    set(IMNVIM_MANIFEST_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/im_neovim/imnvim.manifest")
+    set(IMNVIM_RC_IN "${im_neovim_dir}/imnvim.rc.in")
+    set(IMNVIM_RC "${CMAKE_CURRENT_BINARY_DIR}/im_neovim/imnvim.rc")
+    configure_file("${IMNVIM_RC_IN}" "${IMNVIM_RC}" @ONLY)
+    target_sources(imnvim PRIVATE "${IMNVIM_RC}")
+
+    # RC compiler needs to find resource.h (next to imnvim.rc.in).
+    target_include_directories(imnvim PRIVATE "${im_neovim_dir}")
+
+    # Use our custom manifest (DPI awareness, UTF-8) instead of the
+    # linker's auto-generated one.  /MANIFEST:NO disables the linker's
+    # own manifest so it doesn't conflict with the one embedded via .rc.
+    target_link_options(imnvim PRIVATE "/MANIFEST:NO")
+endif()
+
 if(${CMAKE_BUILD_TYPE} STREQUAL "Release")
     target_compile_definitions(im_app PRIVATE
         IM_APP_NO_CONSOLE=1
@@ -257,4 +277,18 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "Release")
     if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         set_target_properties(imnvim PROPERTIES WIN32_EXECUTABLE 1)
     endif()
+endif()
+
+# --- Install rules for Windows shipping (portable folder) ---
+if(WIN32)
+    # Main executable
+    install(TARGETS imnvim RUNTIME DESTINATION .)
+
+    # VCRuntime DLLs — resolved from the built binary; system DLLs excluded.
+    install(FILES $<TARGET_RUNTIME_DLLS:imnvim> DESTINATION .)
+
+    # Bundled Neovim runtime (installed alongside the executable)
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/nvim/"
+        DESTINATION nvim
+        USE_SOURCE_PERMISSIONS)
 endif()

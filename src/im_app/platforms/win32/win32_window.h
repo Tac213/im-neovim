@@ -23,7 +23,7 @@ class Win32Window : public Window {
 
   private:
     HWND m_hwnd;
-    WNDCLASSEX m_window_class = {};
+    WNDCLASSEXW m_window_class = {};
     bool m_is_titlebar_hovered = false;
 
     struct WindowData {

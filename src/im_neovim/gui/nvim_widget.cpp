@@ -586,7 +586,7 @@ void NvimWidget::_spawn_nvim() {
     options.file = m_nvim_exe.c_str();
     options.args = args;
     options.cwd = m_nvim_cwd.c_str();
-    options.flags = 0;
+    options.flags = UV_PROCESS_WINDOWS_HIDE;  // no console for --embed nvim
     options.env = nullptr;
     options.stdio_count = 3;
     options.stdio = nvim_stdio;

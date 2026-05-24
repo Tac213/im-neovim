@@ -1,0 +1,43 @@
+#include <windows.h>
+#include "resource.h"
+
+// Application icon
+IDI_MAIN_ICON ICON "@IMNVIM_ICON_PATH@"
+
+// Embed the application manifest (DPI awareness, UTF-8 code page, etc.)
+// The linker's auto-generated manifest is disabled via /MANIFEST:NO so
+// that our custom manifest is the only one embedded.
+1 RT_MANIFEST "@IMNVIM_MANIFEST_PATH@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEFLAGSMASK   0x3fL
+#ifdef _DEBUG
+FILEFLAGS       VS_FF_DEBUG
+#else
+FILEFLAGS       0x0L
+#endif
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "ImNeovim"
+            VALUE "FileDescription",  "ImGui-based GUI for Neovim"
+            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "InternalName",     "imnvim"
+            VALUE "LegalCopyright",   "See LICENSE file"
+            VALUE "OriginalFilename", "imnvim.exe"
+            VALUE "ProductName",      "ImNeovim"
+            VALUE "ProductVersion",   "0.1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END

@@ -1,6 +1,9 @@
 # build files
 build/
 
+# dist files
+dist/
+
 # clangd cache files
 .cache/
 
