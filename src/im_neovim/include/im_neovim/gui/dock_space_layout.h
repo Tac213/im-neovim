@@ -1,5 +1,6 @@
 #pragma once
 
+#include "im_neovim/signal.h"
 #include <imgui.h>
 
 namespace ImNeovim {
@@ -85,6 +86,14 @@ class DockSpaceLayout {
      * @brief Clears the pending reset flag.
      */
     void clear_reset_pending() { m_pending_reset = false; }
+
+    // -- Menu action signals (connected by LayerMainWindow) --
+
+    /// Emitted when File > Open Folder is clicked.
+    Signal<> on_open_folder;
+
+    /// Emitted when File > Exit is clicked.
+    Signal<> on_exit;
 
   private:
     bool m_initialized{false};

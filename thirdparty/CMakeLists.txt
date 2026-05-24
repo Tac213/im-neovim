@@ -137,6 +137,11 @@ if(NOT TARGET freetype)
     set_target_properties(freetype PROPERTIES FOLDER ${third_party_folder}/freetype)
 endif()
 
+if(NOT TARGET tinyfiledialogs)
+    add_subdirectory(tinyfiledialogs)
+    set_target_properties(tinyfiledialogs PROPERTIES FOLDER ${third_party_folder}/tinyfiledialogs)
+endif()
+
 if(NOT TARGET libuv)
     add_subdirectory(libuv)
 endif()

@@ -208,6 +208,7 @@ target_link_libraries(
     libvterm
     libuv::libuv
     msgpack-cxx
+    tinyfiledialogs
 )
 
 target_include_directories(

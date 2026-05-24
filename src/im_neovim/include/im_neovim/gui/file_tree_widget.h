@@ -23,6 +23,9 @@ class FileTreeWidget {
     bool is_visible() const { return m_is_visible; }
     void set_visible(bool visible) { m_is_visible = visible; }
     void set_current_directory(const std::filesystem::path& path);
+    const std::filesystem::path& current_directory() const {
+        return m_current_dir;
+    }
 
     // Docking support
     void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }

@@ -76,6 +76,16 @@ void DockSpaceLayout::render() {
 
     // Render menu bar
     if (ImGui::BeginMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("Open Folder...")) {
+                on_open_folder.emit();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit")) {
+                on_exit.emit();
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("View")) {
             if (ImGui::MenuItem("Reset Layout")) {
                 // Queue a reset for after the frame completes

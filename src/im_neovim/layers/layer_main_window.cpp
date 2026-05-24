@@ -1,5 +1,9 @@
 #include "layer_main_window.h"
+#include "im_neovim/logging.h"
+#include <algorithm>
+#include <im_app/application.h>
 #include <imgui.h>
+#include <tinyfiledialogs.h>
 
 namespace ImNeovim {
 LayerMainWindow::LayerMainWindow() {
@@ -31,6 +35,60 @@ void LayerMainWindow::on_attach() {
                 nvim->open_file(path);
             }
         });
+    }
+
+    // Connect menu action signals from the dock layout.
+    if (m_dock_layout) {
+        // File > Exit
+        m_dock_layout->on_exit.connect(
+            []() { ImApp::Application::get().exit(); });
+
+        // File > Open Folder...
+        std::weak_ptr<FileTreeWidget> weak_file_tree{m_file_tree};
+        std::weak_ptr<NvimWidget> weak_nvim_for_cd{m_nvim};
+        m_dock_layout->on_open_folder.connect(
+            [weak_file_tree, weak_nvim_for_cd]() {
+                auto file_tree = weak_file_tree.lock();
+                if (!file_tree) {
+                    return;
+                }
+
+                const char* selected = tinyfd_selectFolderDialog(
+                    "Open Folder", file_tree->current_directory().c_str());
+
+                if (selected == nullptr) {
+                    return; // User cancelled
+                }
+
+                // Update the file tree.
+                file_tree->set_current_directory(selected);
+
+                // Send :cd to Neovim to keep the working directory in sync.
+                auto nvim = weak_nvim_for_cd.lock();
+                if (!nvim) {
+                    return;
+                }
+
+                std::string path = selected;
+                std::replace(path.begin(), path.end(), '\\', '/');
+                std::string cmd = "cd " + path;
+
+                auto request = nvim->start_nvim_request(
+                    "nvim_command", 1,
+                    [](msgpack::object&) {
+                        // :cd succeeded — Neovim will emit a chdir redraw
+                        // event that updates the internal cwd tracking.
+                    },
+                    [](int32_t error_code, const std::string& error_msg) {
+                        LOG_ERROR("Failed to change directory: {} - {}",
+                                  error_code, error_msg);
+                    });
+
+                if (request) {
+                    request->arg_str(cmd.size());
+                    request->arg_str_body(cmd.data(), cmd.size());
+                }
+            });
     }
 }
 
