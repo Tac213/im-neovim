@@ -155,10 +155,16 @@ void NvimWidget::open_file(const std::string& path) {
     // Build the edit command
     std::string cmd = "edit " + escaped_path;
 
+    // Extract the base filename for the window title
+    std::string filename = std::filesystem::path(path).filename().string();
+
     // Send the command to nvim via nvim_command
     auto request = start_nvim_request(
         "nvim_command", 1,
-        [](msgpack::object&) { LOG_DEBUG("File opened successfully"); },
+        [this, filename](msgpack::object&) {
+            m_window_title = filename;
+            LOG_DEBUG("File opened successfully: {}", filename);
+        },
         [](int32_t error_code, const std::string& error_msg) {
             LOG_ERROR("Failed to open file: {} - {}", error_code, error_msg);
         });
