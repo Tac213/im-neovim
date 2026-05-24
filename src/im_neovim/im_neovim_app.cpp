@@ -49,7 +49,7 @@ static void initialize_logger() {
 
 namespace ImApp {
 Application* create_im_app(int argc, char** argv) {
-    AppSpec app_spec{.main_window_no_border = false};
+    AppSpec app_spec{.name = "ImNeovim", .main_window_no_border = false};
     auto* app = new Application(app_spec);
     ImNeovim::initialize_logger();
     app->push_layer<ImNeovim::LayerLibuv>();
