@@ -2,6 +2,7 @@
 #include "im_neovim/logging.h"
 #include <algorithm>
 #include <im_app/application.h>
+#include <im_app/file_system.h>
 #include <imgui.h>
 #include <tinyfiledialogs.h>
 
@@ -30,11 +31,12 @@ void LayerMainWindow::on_attach() {
     // Connect signals.
     if (m_file_tree && m_nvim) {
         std::weak_ptr<NvimWidget> weak_nvim{m_nvim};
-        m_file_tree->file_clicked.connect([weak_nvim](const std::string& path) {
-            if (auto nvim = weak_nvim.lock()) {
-                nvim->open_file(path);
-            }
-        });
+        m_file_tree->file_clicked.connect(
+            [weak_nvim](const std::filesystem::path& path) {
+                if (auto nvim = weak_nvim.lock()) {
+                    nvim->open_file(path);
+                }
+            });
     }
 
     // Connect menu action signals from the dock layout.
@@ -53,15 +55,30 @@ void LayerMainWindow::on_attach() {
                     return;
                 }
 
+#ifdef IM_APP_WIN32
+                // Use wide-char (UTF-16) API on Windows for proper Unicode
+                // support. The char* API returns UTF-8 which
+                // std::filesystem::path (wchar_t-based on Windows) does not
+                // understand.
+                const wchar_t* selected_w = tinyfd_selectFolderDialogW(
+                    L"Open Folder", file_tree->current_directory().c_str());
+                if (selected_w == nullptr) {
+                    return; // User cancelled
+                }
+                std::filesystem::path selected_path{selected_w};
+#else
+                std::string current_dir =
+                    file_tree->current_directory().string();
                 const char* selected = tinyfd_selectFolderDialog(
-                    "Open Folder", file_tree->current_directory().c_str());
-
+                    "Open Folder", current_dir.c_str());
                 if (selected == nullptr) {
                     return; // User cancelled
                 }
+                std::filesystem::path selected_path{selected};
+#endif
 
                 // Update the file tree.
-                file_tree->set_current_directory(selected);
+                file_tree->set_current_directory(selected_path);
 
                 // Send :cd to Neovim to keep the working directory in sync.
                 auto nvim = weak_nvim_for_cd.lock();
@@ -69,7 +86,7 @@ void LayerMainWindow::on_attach() {
                     return;
                 }
 
-                std::string path = selected;
+                std::string path = ImApp::path_to_string(selected_path);
                 std::replace(path.begin(), path.end(), '\\', '/');
                 std::string cmd = "cd " + path;
 

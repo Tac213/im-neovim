@@ -32,7 +32,7 @@ class FileTreeWidget {
     ImGuiID get_dock_id() const { return m_dock_id; }
 
     // Signals
-    Signal<const std::string&> file_clicked;
+    Signal<const std::filesystem::path&> file_clicked;
 
   private:
     // Directory entry structure

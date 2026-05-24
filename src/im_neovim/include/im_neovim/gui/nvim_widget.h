@@ -1,6 +1,7 @@
 #pragma once
 #include "im_neovim/gui/text_widget.h"
 #include <atomic>
+#include <filesystem>
 #include <functional>
 #include <imgui.h>
 #include <memory>
@@ -39,7 +40,7 @@ class NvimWidget : public TextWidget,
     NvimWidget();
     ~NvimWidget();
 
-    void open_file(const std::string& path);
+    void open_file(const std::filesystem::path& path);
     void render() override;
     void resize(uint32_t cols, uint32_t rows);
 
@@ -95,7 +96,7 @@ class NvimWidget : public TextWidget,
     void _show_save_modal();
     void _render_save_modal();
     void _handle_save_decision(bool save, bool discard);
-    void _do_open_file(const std::string& path, bool force = false);
+    void _do_open_file(const std::filesystem::path& path, bool force = false);
 
     /* Font management */
     static ParsedFont _parse_guifont(const std::string& guifont_str);
@@ -269,7 +270,7 @@ class NvimWidget : public TextWidget,
 
     // Save dialog state
     bool m_show_save_dialog{false};
-    std::string m_pending_file_path;
+    std::filesystem::path m_pending_file_path;
     SaveDialogAction m_save_dialog_action{SaveDialogAction::Close};
 
     // Mouse, bell, and option state

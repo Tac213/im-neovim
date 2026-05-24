@@ -146,7 +146,7 @@ NvimWidget::~NvimWidget() {
     m_requests.clear();
 }
 
-void NvimWidget::open_file(const std::string& path) {
+void NvimWidget::open_file(const std::filesystem::path& path) {
     // If the current buffer is modified, queue the save dialog instead
     // of immediately opening the new file.
     if (m_buffer_modified) {
@@ -158,22 +158,21 @@ void NvimWidget::open_file(const std::string& path) {
     _do_open_file(path);
 }
 
-void NvimWidget::_do_open_file(const std::string& path, bool force) {
+void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force) {
     // Ensure the window is visible
     set_visible(true);
     m_window_open = true;
 
-    // Escape the path for use in a vim command
-    std::string escaped_path = path;
-    // Replace backslashes with forward slashes for vim
+    // Build the nvim command with UTF-8 path (forward slashes).
+    std::string escaped_path = ImApp::path_to_string(path);
     std::replace(escaped_path.begin(), escaped_path.end(), '\\', '/');
 
     // Build the edit command — use 'edit!' when discarding changes
     std::string cmd = force ? "edit! " : "edit ";
     cmd += escaped_path;
 
-    // Extract the base filename for the window title
-    std::string filename = std::filesystem::path(path).filename().string();
+    // Extract the base filename for the window title.
+    std::string filename = ImApp::path_to_string(path.filename());
 
     // Send the command to nvim via nvim_command
     auto request = start_nvim_request(
@@ -547,8 +546,8 @@ void NvimWidget::_spawn_nvim() {
 #else
                          "nvim";
 #endif
-    m_nvim_exe = nvim_exe_path.string();
-    m_nvim_cwd = cwd.string();
+    m_nvim_exe = ImApp::path_to_string(nvim_exe_path);
+    m_nvim_cwd = ImApp::path_to_string(cwd);
 
     char* args[3];
     args[0] = const_cast<char*>(m_nvim_exe.c_str());

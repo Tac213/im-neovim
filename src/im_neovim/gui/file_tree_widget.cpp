@@ -1,9 +1,11 @@
 #include "im_neovim/gui/file_tree_widget.h"
 #include "im_neovim/logging.h"
 #include <algorithm>
+#include <im_app/file_system.h>
 #include <imgui.h>
 
 namespace ImNeovim {
+using ImApp::path_to_string;
 
 FileTreeWidget::FileTreeWidget()
     : m_needs_refresh(true), m_watch_handle(nullptr) {
@@ -62,7 +64,8 @@ void FileTreeWidget::
         // Sort directories and files alphabetically by filename
         auto compare_by_filename = [](const DirectoryEntry& a,
                                       const DirectoryEntry& b) {
-            return a.path.filename().string() < b.path.filename().string();
+            return path_to_string(a.path.filename()) <
+                   path_to_string(b.path.filename());
         };
 
         std::sort(directories.begin(), directories.end(), compare_by_filename);
@@ -75,11 +78,11 @@ void FileTreeWidget::
         entry.children.insert(entry.children.end(), files.begin(), files.end());
 
     } catch (const std::filesystem::filesystem_error& e) {
-        LOG_ERROR("Error scanning directory '{}': {}", entry.path.string(),
-                  e.what());
+        LOG_ERROR("Error scanning directory '{}': {}",
+                  path_to_string(entry.path), e.what());
     } catch (const std::exception& e) {
         LOG_ERROR("Unexpected error scanning directory '{}': {}",
-                  entry.path.string(), e.what());
+                  path_to_string(entry.path), e.what());
     }
 }
 
@@ -120,9 +123,9 @@ void FileTreeWidget::_render_directory_node(DirectoryEntry& entry, int depth) {
         flags |= ImGuiTreeNodeFlags_DefaultOpen;
     }
 
-    std::string filename = entry.path.filename().string();
+    std::string filename = path_to_string(entry.path.filename());
     if (filename.empty()) {
-        filename = entry.path.string(); // For root, use full path
+        filename = path_to_string(entry.path); // For root, use full path
     }
 
     bool node_open = ImGui::TreeNodeEx(filename.c_str(), flags);
@@ -156,7 +159,7 @@ void FileTreeWidget::_render_file_node(DirectoryEntry& entry, int depth) {
                                ImGuiTreeNodeFlags_NoTreePushOnOpen |
                                ImGuiTreeNodeFlags_SpanAvailWidth;
 
-    std::string filename = entry.path.filename().string();
+    std::string filename = path_to_string(entry.path.filename());
 
     ImGui::TreeNodeEx(filename.c_str(), flags);
 
@@ -171,7 +174,7 @@ void FileTreeWidget::_on_item_clicked(const std::filesystem::path& path,
         _toggle_expand(m_root_entry); // This will be called from within
                                       // _render_directory_node
     } else {
-        file_clicked.emit(path.string());
+        file_clicked.emit(path);
     }
 }
 
@@ -214,9 +217,9 @@ void FileTreeWidget::render() {
 
         // Render the file tree
         if (!std::filesystem::exists(m_current_dir)) {
+            std::string dir_str = path_to_string(m_current_dir);
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
-                               "Directory not accessible: %s",
-                               m_current_dir.string().c_str());
+                               "Directory not accessible: %s", dir_str.c_str());
         } else if (!m_root_entry.children.empty() || m_root_entry.is_expanded) {
             // Render children of root
             for (auto& child : m_root_entry.children) {
