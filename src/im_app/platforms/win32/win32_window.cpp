@@ -47,9 +47,11 @@ LRESULT CALLBACK Win32Window::_window_proc(HWND hwnd, uint32_t message,
         if ((w_param & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
             return 0;
         break;
+    case WM_CLOSE:
+        IM_APP.request_exit();
+        return 0;
     case WM_DESTROY:
         ::PostQuitMessage(0);
-        IM_APP.exit();
         return 0;
     }
     // Handle any messages the switch statement didn't.

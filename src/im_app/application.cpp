@@ -28,6 +28,7 @@ Application::~Application() {
 
 int Application::exec() {
     m_is_running = true;
+    m_exit_requested = false;
     // Main loop
     while (m_is_running) {
         if (m_window) {
@@ -36,6 +37,25 @@ int Application::exec() {
         for (auto& layer : m_layer_stack) {
             layer->on_update();
         }
+
+        // Check graceful exit request — layers can block by returning false
+        if (m_exit_requested) {
+            bool all_agree = true;
+            for (auto& layer : m_layer_stack) {
+                if (!layer->on_exit_requested()) {
+                    all_agree = false;
+                    break;
+                }
+            }
+            if (all_agree) {
+                exit();
+            } else {
+                // A layer is handling the exit (showing a modal, etc.).
+                // Clear the flag so we don't re-trigger next frame.
+                m_exit_requested = false;
+            }
+        }
+
         m_imgui_renderer->new_frame();
         for (auto& layer : m_layer_stack) {
             layer->on_imgui_render();
@@ -47,6 +67,10 @@ int Application::exec() {
 }
 
 void Application::exit() { m_is_running = false; }
+
+void Application::request_exit() { m_exit_requested = true; }
+
+void Application::cancel_exit() { m_exit_requested = false; }
 
 void Application::_initialize() {
     initialize_spdlog();

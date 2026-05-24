@@ -3,16 +3,24 @@
 #include <imgui_impl_glfw.h>
 
 namespace ImApp {
+
+void DarwinWindow::_on_window_close(GLFWwindow* window) {
+    auto* self = static_cast<DarwinWindow*>(glfwGetWindowUserPointer(window));
+    if (self) {
+        self->m_close_requested = true;
+    }
+}
+
 DarwinWindow::DarwinWindow(const WindowProps& props) { _initialize(props); }
 
 DarwinWindow::~DarwinWindow() { _finalize(); }
 
 void DarwinWindow::on_update() {
-    if (glfwWindowShouldClose(m_window)) {
-        IM_APP.exit();
-        return;
-    }
     glfwPollEvents();
+    if (m_close_requested) {
+        m_close_requested = false;
+        IM_APP.request_exit();
+    }
 }
 
 void DarwinWindow::minimize() {
@@ -51,6 +59,8 @@ void DarwinWindow::_initialize(const WindowProps& props) {
     if (m_window == nullptr) {
         throw std::runtime_error("Failed to create glfw window.");
     }
+    glfwSetWindowUserPointer(m_window, this);
+    glfwSetWindowCloseCallback(m_window, _on_window_close);
 }
 
 void DarwinWindow::_finalize() {

@@ -42,8 +42,7 @@ void LayerMainWindow::on_attach() {
     // Connect menu action signals from the dock layout.
     if (m_dock_layout) {
         // File > Exit
-        m_dock_layout->on_exit.connect(
-            []() { ImApp::Application::get().exit(); });
+        m_dock_layout->on_exit.connect([]() { IM_APP.request_exit(); });
 
         // File > Open Folder...
         std::weak_ptr<FileTreeWidget> weak_file_tree{m_file_tree};
@@ -140,6 +139,12 @@ void LayerMainWindow::on_imgui_render() {
     m_nvim->render();
     m_terminal->render();
 
+    // Render exit confirmation modal when the user tries to close the app
+    // with unsaved changes.
+    if (m_exit_modal_active) {
+        _render_exit_modal();
+    }
+
     // Handle pending layout reset after all rendering is done
     if (m_dock_layout && m_dock_layout->is_reset_pending()) {
         m_dock_layout->clear_reset_pending();
@@ -153,4 +158,102 @@ void LayerMainWindow::on_imgui_render() {
             DockSpaceLayout::Zone::Terminal));
     }
 }
+// --- Exit confirmation modal ---
+
+bool LayerMainWindow::on_exit_requested() {
+    if (m_nvim && m_nvim->has_modified_buffers()) {
+        _show_exit_modal();
+        return false;
+    }
+    return true;
+}
+
+void LayerMainWindow::_show_exit_modal() {
+    // Only set the flag — do NOT call ImGui here.
+    // on_exit_requested() runs before ImGui::NewFrame(), so any ImGui
+    // function (IsPopupOpen, OpenPopup, etc.) will crash.
+    // _render_exit_modal() handles the actual ImGui popup calls during
+    // the render phase.
+    m_exit_modal_active = true;
+}
+
+void LayerMainWindow::_handle_exit_decision(bool save, bool discard) {
+    if (save) {
+        // Send :wa (write all) to Neovim, then exit.
+        auto req = m_nvim->start_nvim_request(
+            "nvim_command", 1, [](msgpack::object&) { IM_APP.exit(); },
+            [](int32_t error_code, const std::string& error_msg) {
+                LOG_ERROR("Failed to save all files: {} - {}", error_code,
+                          error_msg);
+                // Still exit on error to avoid getting stuck.
+                IM_APP.exit();
+            });
+        if (req) {
+            const std::string cmd{"wa"};
+            req->arg_str(cmd.size());
+            req->arg_str_body(cmd.data(), cmd.size());
+        }
+    } else if (discard) {
+        // Send bdelete! to force-delete the modified buffer, then exit.
+        // Follows the same pattern as NvimWidget::_handle_save_decision.
+        auto req = m_nvim->start_nvim_request(
+            "nvim_command", 1, [](msgpack::object&) { IM_APP.exit(); },
+            [](int32_t error_code, const std::string& error_msg) {
+                LOG_ERROR("Failed to discard changes: {} - {}", error_code,
+                          error_msg);
+                // Still exit on error to avoid getting stuck.
+                IM_APP.exit();
+            });
+        if (req) {
+            const std::string cmd{"bdelete!"};
+            req->arg_str(cmd.size());
+            req->arg_str_body(cmd.data(), cmd.size());
+        }
+    }
+    // Cancel: do nothing, dismiss dialog
+
+    m_exit_modal_active = false;
+    ImGui::CloseCurrentPopup();
+}
+
+void LayerMainWindow::_render_exit_modal() {
+    // ImGui modal pattern: OpenPopup must be called every frame before
+    // BeginPopupModal.
+    if (!ImGui::IsPopupOpen("##ExitModified")) {
+        ImGui::OpenPopup("##ExitModified");
+    }
+
+    // Center the modal on screen
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("##ExitModified", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("You have unsaved changes. Do you want to save before "
+                    "exiting?");
+        ImGui::Spacing();
+
+        float button_width = ImGui::GetFontSize() * 7.0f;
+
+        if (ImGui::Button("Save", ImVec2(button_width, 0))) {
+            _handle_exit_decision(true, false);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save", ImVec2(button_width, 0))) {
+            _handle_exit_decision(false, true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+            _handle_exit_decision(false, false);
+        }
+
+        // Also allow closing with Escape key
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            _handle_exit_decision(false, false);
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
 } // namespace ImNeovim

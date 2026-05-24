@@ -20,7 +20,9 @@ class DarwinWindow : public Window {
 
   private:
     ::GLFWwindow* m_window{nullptr};
+    bool m_close_requested{false};
 
+    static void _on_window_close(GLFWwindow* window);
     void _initialize(const WindowProps& props);
     void _finalize();
 };

@@ -56,6 +56,9 @@ class NvimWidget : public TextWidget,
     /// Must be called between frames, before ImGui::NewFrame().
     void process_pending_font_reload();
 
+    /// Returns true if the current buffer has unsaved modifications.
+    bool has_modified_buffers() const { return m_buffer_modified; }
+
     // Docking support
     void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }
     ImGuiID get_dock_id() const { return m_dock_id; }
@@ -267,7 +270,6 @@ class NvimWidget : public TextWidget,
     // Buffer modification tracking
     bool m_buffer_modified{false};
     bool m_needs_modified_check{false};
-
     // Save dialog state
     bool m_show_save_dialog{false};
     std::filesystem::path m_pending_file_path;

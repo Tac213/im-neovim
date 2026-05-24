@@ -4,16 +4,24 @@
 #include <stdexcept>
 
 namespace ImApp {
+
+void GlfwWindow::_on_window_close(GLFWwindow* window) {
+    auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(window));
+    if (self) {
+        self->m_close_requested = true;
+    }
+}
+
 GlfwWindow::GlfwWindow(const WindowProps& props) { _initialize(props); }
 
 GlfwWindow::~GlfwWindow() { _finalize(); }
 
 void GlfwWindow::on_update() {
-    if (glfwWindowShouldClose(m_window)) {
-        IM_APP.exit();
-        return;
-    }
     glfwPollEvents();
+    if (m_close_requested) {
+        m_close_requested = false;
+        IM_APP.request_exit();
+    }
 }
 
 void GlfwWindow::minimize() {
@@ -51,6 +59,8 @@ void GlfwWindow::_initialize(const WindowProps& props) {
     if (m_window == nullptr) {
         throw std::runtime_error("Failed to create glfw window.");
     }
+    glfwSetWindowUserPointer(m_window, this);
+    glfwSetWindowCloseCallback(m_window, _on_window_close);
 }
 
 void GlfwWindow::_finalize() {

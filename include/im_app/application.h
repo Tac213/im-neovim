@@ -35,6 +35,17 @@ class Application {
     int exec();
     void exit();
 
+    /// Request a graceful exit. Does NOT stop the loop immediately;
+    /// layers get a chance to block the exit (e.g. to show a save dialog).
+    void request_exit();
+
+    /// Cancel a pending exit request (e.g. user clicked Cancel in a save
+    /// dialog).
+    void cancel_exit();
+
+    /// Check whether a graceful exit has been requested.
+    bool is_exit_requested() const { return m_exit_requested; }
+
     static Application& get() { return *_s_application; }
 
     template <typename T> void push_layer() {
@@ -59,6 +70,7 @@ class Application {
     AppSpec m_app_spec;
     std::vector<std::shared_ptr<Layer>> m_layer_stack;
     bool m_is_running = false;
+    bool m_exit_requested{false};
     std::shared_ptr<Window> m_window = nullptr;
     std::shared_ptr<GraphicsContext> m_graphics_context = nullptr;
     std::shared_ptr<ImGuiRenderer> m_imgui_renderer = nullptr;
