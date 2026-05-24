@@ -147,13 +147,30 @@ NvimWidget::~NvimWidget() {
 }
 
 void NvimWidget::open_file(const std::string& path) {
+    // If the current buffer is modified, queue the save dialog instead
+    // of immediately opening the new file.
+    if (m_buffer_modified) {
+        m_pending_file_path = path;
+        m_save_dialog_action = SaveDialogAction::OpenFile;
+        _show_save_modal();
+        return;
+    }
+    _do_open_file(path);
+}
+
+void NvimWidget::_do_open_file(const std::string& path, bool force) {
+    // Ensure the window is visible
+    set_visible(true);
+    m_window_open = true;
+
     // Escape the path for use in a vim command
     std::string escaped_path = path;
     // Replace backslashes with forward slashes for vim
     std::replace(escaped_path.begin(), escaped_path.end(), '\\', '/');
 
-    // Build the edit command
-    std::string cmd = "edit " + escaped_path;
+    // Build the edit command — use 'edit!' when discarding changes
+    std::string cmd = force ? "edit! " : "edit ";
+    cmd += escaped_path;
 
     // Extract the base filename for the window title
     std::string filename = std::filesystem::path(path).filename().string();
@@ -163,6 +180,8 @@ void NvimWidget::open_file(const std::string& path) {
         "nvim_command", 1,
         [this, filename](msgpack::object&) {
             m_window_title = filename;
+            m_buffer_modified = false;
+            m_needs_modified_check = true;
             LOG_DEBUG("File opened successfully: {}", filename);
         },
         [](int32_t error_code, const std::string& error_msg) {
@@ -188,6 +207,12 @@ void NvimWidget::render() {
     // from LayerMainWindow::on_update() (between frames).
     _check_font_reload_needed();
 
+    // Check if we need to query the buffer modified state
+    if (m_needs_modified_check) {
+        m_needs_modified_check = false;
+        _query_buffer_modified();
+    }
+
     _check_font_size_changed();
     bool window_created = TextWidget::setup_window();
 
@@ -209,6 +234,12 @@ void NvimWidget::render() {
         }
 
         _update_ime_position();
+    }
+
+    // Render save dialog modal (outside window content check so it appears
+    // even when the window is being closed)
+    if (m_show_save_dialog) {
+        _render_save_modal();
     }
 
     // Always call End() when Begin() was called, per ImGui requirements
@@ -1036,6 +1067,7 @@ void NvimWidget::_redraw_highlight_set(msgpack::object_array& args) {
 
 void NvimWidget::_redraw_flush(msgpack::object_array& /*args*/) {
     m_needs_render = true;
+    m_needs_modified_check = true;
 }
 
 void NvimWidget::_redraw_option_set(msgpack::object_array& args) {
@@ -2895,4 +2927,173 @@ void NvimRequest::arg_ext_body(const char* b, size_t l) {
 }
 
 #undef TRY_TO_SEND
+
+// --- Buffer modification tracking ---
+
+ImGuiWindowFlags NvimWidget::get_additional_window_flags() const {
+    if (m_buffer_modified) {
+        return ImGuiWindowFlags_UnsavedDocument;
+    }
+    return 0;
+}
+
+void NvimWidget::on_close_attempted() {
+    m_save_dialog_action = SaveDialogAction::Close;
+    _show_save_modal();
+}
+
+void NvimWidget::_query_buffer_modified() {
+    // Query Neovim for the current buffer's modified flag.
+    // Uses nvim_get_option_value("modified", {}) — non-deprecated API
+    // that queries the buffer-local option on the current buffer.
+    if (!m_nvim_attached) {
+        return;
+    }
+
+    auto self = shared_from_this();
+    auto req = start_nvim_request(
+        "nvim_get_option_value", 2,
+        [self](msgpack::object& opt_result) {
+            bool modified = false;
+            if (opt_result.type == msgpack::type::BOOLEAN) {
+                modified = opt_result.as<bool>();
+            } else if (opt_result.type == msgpack::type::POSITIVE_INTEGER) {
+                modified = (opt_result.as<uint32_t>() != 0);
+            }
+            self->_on_modified_check_result(modified);
+        },
+        nullptr);
+
+    if (req) {
+        const std::string key{"modified"};
+        req->arg_str(key.size());
+        req->arg_str_body(key.data(), key.size());
+        req->arg_map(0); // empty opts dict — queries current buffer
+    }
+}
+
+void NvimWidget::_on_modified_check_result(bool modified) {
+    m_buffer_modified = modified;
+}
+
+// --- Save dialog ---
+
+void NvimWidget::_show_save_modal() {
+    // Only open the popup once
+    if (!ImGui::IsPopupOpen("##SaveModified")) {
+        ImGui::OpenPopup("##SaveModified");
+        m_show_save_dialog = true;
+    }
+}
+
+void NvimWidget::_handle_save_decision(bool save, bool discard) {
+    if (save) {
+        // Send :w to Neovim, then proceed after save completes
+        auto self = shared_from_this();
+        auto action = m_save_dialog_action;
+        auto pending_path = m_pending_file_path;
+        auto req = start_nvim_request(
+            "nvim_command", 1,
+            [self, action, pending_path](msgpack::object&) {
+                self->m_buffer_modified = false;
+                self->m_needs_modified_check = true;
+                // Proceed with the pending action
+                if (action == SaveDialogAction::Close) {
+                    self->set_visible(false);
+                } else if (action == SaveDialogAction::OpenFile &&
+                           !pending_path.empty()) {
+                    self->_do_open_file(pending_path);
+                }
+            },
+            [self](int32_t error_code, const std::string& error_msg) {
+                LOG_ERROR("Failed to save file: {} - {}", error_code,
+                          error_msg);
+                // Still dismiss dialog on error to avoid getting stuck
+            });
+        if (req) {
+            const std::string cmd{"write"};
+            req->arg_str(cmd.size());
+            req->arg_str_body(cmd.data(), cmd.size());
+        }
+    } else if (discard) {
+        // Discard changes: tell Neovim to force-delete the buffer,
+        // then proceed with close or open.
+        m_buffer_modified = false;
+        auto self = shared_from_this();
+        auto action = m_save_dialog_action;
+        auto pending_path = m_pending_file_path;
+        auto req = start_nvim_request(
+            "nvim_command", 1,
+            [self, action, pending_path](msgpack::object&) {
+                self->m_needs_modified_check = true;
+                if (action == SaveDialogAction::Close) {
+                    self->set_visible(false);
+                } else if (action == SaveDialogAction::OpenFile &&
+                           !pending_path.empty()) {
+                    self->_do_open_file(pending_path, true);
+                }
+            },
+            [](int32_t error_code, const std::string& error_msg) {
+                LOG_ERROR("Failed to discard changes: {} - {}", error_code,
+                          error_msg);
+            });
+        if (req) {
+            const std::string cmd{"bdelete!"};
+            req->arg_str(cmd.size());
+            req->arg_str_body(cmd.data(), cmd.size());
+        }
+    }
+    // Cancel: do nothing, dismiss dialog
+
+    m_show_save_dialog = false;
+    m_pending_file_path.clear();
+    ImGui::CloseCurrentPopup();
+}
+
+void NvimWidget::_render_save_modal() {
+    // ImGui modal pattern: OpenPopup must be called every frame before
+    // BeginPopupModal
+    if (!ImGui::IsPopupOpen("##SaveModified")) {
+        ImGui::OpenPopup("##SaveModified");
+    }
+
+    // Center the modal on screen
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("##SaveModified", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        // Determine the display filename
+        std::string display_name = m_window_title;
+        if (display_name.empty() || display_name == "nvim (no file)") {
+            display_name = "untitled";
+        }
+
+        ImGui::Text("Do you want to save changes to \"%s\"?",
+                    display_name.c_str());
+        ImGui::Spacing();
+
+        float button_width = ImGui::GetFontSize() * 7.0f;
+
+        if (ImGui::Button("Save", ImVec2(button_width, 0))) {
+            _handle_save_decision(true, false);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save", ImVec2(button_width, 0))) {
+            _handle_save_decision(false, true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+            _handle_save_decision(false, false);
+        }
+
+        // Also allow closing with Escape key
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            _handle_save_decision(false, false);
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
 } // namespace ImNeovim

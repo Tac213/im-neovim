@@ -50,6 +50,13 @@ class TextWidget {
     bool setup_window();
     void check_font_size_changed();
 
+    /// Subclasses can override to add ImGuiWindowFlags (e.g. UnsavedDocument).
+    virtual ImGuiWindowFlags get_additional_window_flags() const { return 0; }
+
+    /// Called when the user attempts to close an unsaved-document window.
+    /// Subclasses should show a save dialog here.
+    virtual void on_close_attempted() {}
+
     // Common rendering helpers
     // Returns true if a double-width (CJK) character was rendered.
     static bool render_cell(ImDrawList* draw_list, const ScreenCell& cell,
@@ -70,6 +77,8 @@ class TextWidget {
     std::string m_window_title;
     bool m_is_visible{true};
     bool m_is_embedded{false};
+    bool m_window_open{
+        true}; // persistent across frames (needed for UnsavedDocument)
 
     // Embedded window state
     ImVec2 m_embedded_window_pos{100.0f, 100.0f};

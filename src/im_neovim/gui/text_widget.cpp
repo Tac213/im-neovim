@@ -1,7 +1,8 @@
 #include "im_neovim/gui/text_widget.h"
-#include "im_neovim/logging.h"
 #include "im_app/font_manager.h"
+#include "im_neovim/logging.h"
 #include <algorithm>
+
 
 namespace ImNeovim {
 
@@ -52,15 +53,28 @@ bool TextWidget::setup_window() {
         window_title_ptr = "Window";
     }
 
-    bool window_open = true;
-    bool window_created = ImGui::Begin(window_title_ptr, &window_open,
-                                       ImGuiWindowFlags_NoCollapse);
+    // Reset persistent open flag if the window was re-shown (e.g., after close)
+    if (m_is_visible && !m_window_open) {
+        m_window_open = true;
+    }
+
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoCollapse | get_additional_window_flags();
+    bool window_created = ImGui::Begin(window_title_ptr, &m_window_open, flags);
     if (window_created) {
         m_embedded_window_pos = ImGui::GetWindowPos();
         m_embedded_window_size = ImGui::GetWindowSize();
         m_embedded_window_collapsed = ImGui::IsWindowCollapsed();
-        if (!window_open) {
-            m_is_visible = false;
+        if (!m_window_open) {
+            // When UnsavedDocument is set, ImGui signals close by setting
+            // *p_open=false but keeps the window in the dock.  Re-open so
+            // the subclass can show a save dialog.
+            if (flags & ImGuiWindowFlags_UnsavedDocument) {
+                m_window_open = true;
+                on_close_attempted();
+            } else {
+                m_is_visible = false;
+            }
         }
     } else {
         m_embedded_window_collapsed = true;
@@ -79,32 +93,32 @@ bool TextWidget::is_wide_char(uint32_t codepoint) {
     // East Asian double-width character detection via Unicode block ranges.
     // Covers CJK Unified Ideographs, Fullwidth Forms, Hiragana, Katakana,
     // Hangul, and CJK symbols/punctuation.
-    return (codepoint >= 0x1100 && codepoint <= 0x115F) ||  // Hangul Jamo
-           (codepoint >= 0x2329 && codepoint <= 0x232A) ||  // Misc Technical
-           (codepoint >= 0x2E80 && codepoint <= 0x2EFF) ||  // CJK Rad Suppl
-           (codepoint >= 0x2F00 && codepoint <= 0x2FDF) ||  // Kangxi Radicals
-           (codepoint >= 0x2FF0 && codepoint <= 0x2FFF) ||  // Ideographic Desc
-           (codepoint >= 0x3000 && codepoint <= 0x303F) ||  // CJK Symbols/Punct
-           (codepoint >= 0x3040 && codepoint <= 0x309F) ||  // Hiragana
-           (codepoint >= 0x30A0 && codepoint <= 0x30FF) ||  // Katakana
-           (codepoint >= 0x3100 && codepoint <= 0x312F) ||  // Bopomofo
-           (codepoint >= 0x3130 && codepoint <= 0x318F) ||  // Hangul Compat Jamo
-           (codepoint >= 0x3190 && codepoint <= 0x31FF) ||  // Kanbun + Ext
-           (codepoint >= 0x3200 && codepoint <= 0x32FF) ||  // Encl CJK
-           (codepoint >= 0x3300 && codepoint <= 0x33FF) ||  // CJK Compat
-           (codepoint >= 0x3400 && codepoint <= 0x4DBF) ||  // CJK Ext A
-           (codepoint >= 0x4E00 && codepoint <= 0x9FFF) ||  // CJK Unified
-           (codepoint >= 0xA000 && codepoint <= 0xA4CF) ||  // Yi
-           (codepoint >= 0xAC00 && codepoint <= 0xD7AF) ||  // Hangul Syllables
-           (codepoint >= 0xF900 && codepoint <= 0xFAFF) ||  // CJK Compat Ideo
-           (codepoint >= 0xFE10 && codepoint <= 0xFE1F) ||  // Vertical forms
-           (codepoint >= 0xFE30 && codepoint <= 0xFE4F) ||  // CJK Compat Forms
-           (codepoint >= 0xFE50 && codepoint <= 0xFE6F) ||  // Small Form Var
-           (codepoint >= 0xFF01 && codepoint <= 0xFF60) ||  // Fullwidth ASCII
-           (codepoint >= 0xFFE0 && codepoint <= 0xFFE6) ||  // Fullwidth Signs
-           (codepoint >= 0x1F200 && codepoint <= 0x1F2FF) ||// Encl Ideo Suppl
-           (codepoint >= 0x1F300 && codepoint <= 0x1F5FF) ||// Misc Symbols
-           (codepoint >= 0x1F900 && codepoint <= 0x1F9FF) ||// Suppl Symbols
+    return (codepoint >= 0x1100 && codepoint <= 0x115F) || // Hangul Jamo
+           (codepoint >= 0x2329 && codepoint <= 0x232A) || // Misc Technical
+           (codepoint >= 0x2E80 && codepoint <= 0x2EFF) || // CJK Rad Suppl
+           (codepoint >= 0x2F00 && codepoint <= 0x2FDF) || // Kangxi Radicals
+           (codepoint >= 0x2FF0 && codepoint <= 0x2FFF) || // Ideographic Desc
+           (codepoint >= 0x3000 && codepoint <= 0x303F) || // CJK Symbols/Punct
+           (codepoint >= 0x3040 && codepoint <= 0x309F) || // Hiragana
+           (codepoint >= 0x30A0 && codepoint <= 0x30FF) || // Katakana
+           (codepoint >= 0x3100 && codepoint <= 0x312F) || // Bopomofo
+           (codepoint >= 0x3130 && codepoint <= 0x318F) || // Hangul Compat Jamo
+           (codepoint >= 0x3190 && codepoint <= 0x31FF) || // Kanbun + Ext
+           (codepoint >= 0x3200 && codepoint <= 0x32FF) || // Encl CJK
+           (codepoint >= 0x3300 && codepoint <= 0x33FF) || // CJK Compat
+           (codepoint >= 0x3400 && codepoint <= 0x4DBF) || // CJK Ext A
+           (codepoint >= 0x4E00 && codepoint <= 0x9FFF) || // CJK Unified
+           (codepoint >= 0xA000 && codepoint <= 0xA4CF) || // Yi
+           (codepoint >= 0xAC00 && codepoint <= 0xD7AF) || // Hangul Syllables
+           (codepoint >= 0xF900 && codepoint <= 0xFAFF) || // CJK Compat Ideo
+           (codepoint >= 0xFE10 && codepoint <= 0xFE1F) || // Vertical forms
+           (codepoint >= 0xFE30 && codepoint <= 0xFE4F) || // CJK Compat Forms
+           (codepoint >= 0xFE50 && codepoint <= 0xFE6F) || // Small Form Var
+           (codepoint >= 0xFF01 && codepoint <= 0xFF60) || // Fullwidth ASCII
+           (codepoint >= 0xFFE0 && codepoint <= 0xFFE6) || // Fullwidth Signs
+           (codepoint >= 0x1F200 && codepoint <= 0x1F2FF) || // Encl Ideo Suppl
+           (codepoint >= 0x1F300 && codepoint <= 0x1F5FF) || // Misc Symbols
+           (codepoint >= 0x1F900 && codepoint <= 0x1F9FF) || // Suppl Symbols
            (codepoint >= 0x20000 && codepoint <= 0x2FFFF) || // CJK Ext B+
            (codepoint >= 0x30000 && codepoint <= 0x3FFFF);   // CJK Ext H+
 }

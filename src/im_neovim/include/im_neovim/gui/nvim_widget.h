@@ -15,6 +15,9 @@
 namespace ImNeovim {
 class NvimRequest;
 
+/// Reason the save dialog is being shown.
+enum class SaveDialogAction { Close, OpenFile };
+
 /// Parsed representation of a Neovim guifont / guifontwide string.
 /// Format: "FamilyName:hNN[:b][:i]"  (e.g. "Fira Code:h12:b")
 struct ParsedFont {
@@ -39,6 +42,14 @@ class NvimWidget : public TextWidget,
     void open_file(const std::string& path);
     void render() override;
     void resize(uint32_t cols, uint32_t rows);
+
+    /// Override from TextWidget to add UnsavedDocument flag when buffer is
+    /// modified.
+    ImGuiWindowFlags get_additional_window_flags() const override;
+
+    /// Called when user attempts to close a modified buffer — shows save
+    /// dialog.
+    void on_close_attempted() override;
 
     /// Process any pending font reload (Clear atlas + load new fonts).
     /// Must be called between frames, before ImGui::NewFrame().
@@ -77,6 +88,14 @@ class NvimWidget : public TextWidget,
     void _notify_nvim_resize(uint32_t cols, uint32_t rows);
     void _render_grid(ImDrawList* draw_list, const ImVec2& pos,
                       float char_width, float line_height);
+
+    /* Buffer modified / save dialog */
+    void _query_buffer_modified();
+    void _on_modified_check_result(bool modified);
+    void _show_save_modal();
+    void _render_save_modal();
+    void _handle_save_decision(bool save, bool discard);
+    void _do_open_file(const std::string& path, bool force = false);
 
     /* Font management */
     static ParsedFont _parse_guifont(const std::string& guifont_str);
@@ -243,6 +262,15 @@ class NvimWidget : public TextWidget,
     bool m_busy{false};
     double m_last_blink_time{0.0};
     bool m_cursor_visible{true};
+
+    // Buffer modification tracking
+    bool m_buffer_modified{false};
+    bool m_needs_modified_check{false};
+
+    // Save dialog state
+    bool m_show_save_dialog{false};
+    std::string m_pending_file_path;
+    SaveDialogAction m_save_dialog_action{SaveDialogAction::Close};
 
     // Mouse, bell, and option state
     bool m_mouse_enabled{true};
