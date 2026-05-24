@@ -321,6 +321,23 @@ static std::vector<std::string> get_fallback_families(bool wsl_env) {
 // Public API
 // ---------------------------------------------------------------------------
 
+std::vector<std::string> FontManager::get_default_cjk_families() {
+    // WSL: use Windows CJK fonts accessible under /mnt/c/Windows/Fonts/.
+    // Native Linux: use Noto Sans CJK (pan-CJK, covers all scripts) with
+    // WenQuanYi as a fallback for older distros.
+    if (is_wsl()) {
+        return {
+            "Microsoft YaHei & Microsoft YaHei UI",
+            "MS Gothic & MS UI Gothic & MS PGothic",
+            "Malgun Gothic",
+        };
+    }
+    return {
+        "Noto Sans CJK SC",    // Pan-CJK (Chinese + Japanese + Korean)
+        "WenQuanYi Micro Hei", // SC fallback (common on older distros)
+    };
+}
+
 std::string FontManager::find_system_font(const std::string& family_name,
                                           bool bold, bool italic,
                                           bool allow_fallback) {
@@ -356,6 +373,36 @@ std::string FontManager::find_system_font(const std::string& family_name,
         result = find_font_hardcoded(family, bold, italic, wsl);
         if (!result.empty()) {
             return result;
+        }
+    }
+
+    // 3. WSL fallback: try known Windows CJK font paths directly.
+    //    Fontconfig does not index /mnt/c/Windows/Fonts/, and these
+    //    families are not in the g_known_fonts table (which is
+    //    monospace-only).  This covers the CJK families listed in
+    //    FontManager::get_default_cjk_families().
+    if (wsl && !bold && !italic) {
+        // Map CJK font family names to their Windows filenames under
+        // /mnt/c/Windows/Fonts/.  Both .ttc and .ttf extensions are
+        // checked for each entry.
+        static const std::pair<const char*, const char*> s_wsl_cjk_map[] = {
+            {"Microsoft YaHei & Microsoft YaHei UI", "msyh"},
+            {"MS Gothic & MS UI Gothic & MS PGothic", "msgothic"},
+            {"Malgun Gothic", "malgun"},
+        };
+
+        for (const auto& [name, stem] : s_wsl_cjk_map) {
+            if (family_name == name) {
+                for (const char* ext : {".ttc", ".ttf"}) {
+                    std::filesystem::path path =
+                        std::filesystem::path("/mnt/c/Windows/Fonts") /
+                        (std::string(stem) + ext);
+                    if (std::filesystem::exists(path)) {
+                        return path.string();
+                    }
+                }
+                break;
+            }
         }
     }
 

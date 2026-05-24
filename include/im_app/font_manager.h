@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 struct ImFont;
 struct ImFontAtlas;
@@ -68,6 +69,23 @@ struct FontManager {
 
     /// Access the most recently loaded CJK wide font (nullptr if none).
     static ImFont* get_wide_font();
+
+    /// Returns a prioritized list of CJK font family names for the current
+    /// platform. Covers Chinese (SC+TC), Japanese, and Korean scripts.
+    /// The list is ordered by quality/availability — the caller should try
+    /// every family, not just the first, since no single system font covers
+    /// all three scripts on all platforms.
+    static std::vector<std::string> get_default_cjk_families();
+
+    /// Merge CJK glyphs from system fonts into an existing font atlas.
+    /// Iterates get_default_cjk_families(), loads every found font with
+    /// MergeMode=true and CJK glyph ranges, so all East Asian scripts
+    /// (Chinese, Japanese, Korean) are available through the primary font.
+    /// Must be called AFTER the regular font is loaded (atlas non-empty).
+    /// Non-fatal — logs a warning but returns normally if no CJK fonts found.
+    /// @param atlas   The font atlas to merge CJK glyphs into.
+    /// @param size_px Font size in pixels (should match the regular font).
+    static void merge_cjk_fallback(ImFontAtlas* atlas, float size_px);
 
   private:
     static FontSet s_loaded_fonts;

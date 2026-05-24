@@ -109,6 +109,20 @@ static std::string find_font_hardcoded(const std::string &family_name,
     return "";
 }
 
+std::vector<std::string> FontManager::get_default_cjk_families() {
+    // One font per script — each covers a distinct Unicode block:
+    //   PingFang SC        → CJK Unified Ideographs (Chinese)
+    //   Hiragino Sans      → Hiragana, Katakana (Japanese)
+    //   Apple SD Gothic Neo → Hangul Syllables (Korean)
+    // ImGui merge mode preserves the first-loaded glyph per codepoint,
+    // so CJK ideographs come from PingFang SC and are not overridden.
+    return {
+        "PingFang SC",
+        "Hiragino Sans",
+        "Apple SD Gothic Neo",
+    };
+}
+
 std::string FontManager::find_system_font(const std::string &family_name,
                                           bool bold, bool italic,
                                           bool /*allow_fallback*/) {

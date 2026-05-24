@@ -123,6 +123,9 @@ FontSet FontManager::load_default_font(ImFontAtlas* atlas, float size_px) {
             "FontManager: failed to load regular font for family '{}'", family);
     }
 
+    // Merge CJK fallback fonts for East Asian character support.
+    merge_cjk_fallback(atlas, size_px);
+
     return s_loaded_fonts;
 }
 
@@ -218,6 +221,9 @@ FontSet FontManager::load_font(const std::string& family, float size_px,
                       "'{}' at {}px",
                       family, size_px);
     }
+
+    // Merge CJK fallback fonts for East Asian character support.
+    merge_cjk_fallback(atlas, size_px);
 
     return s_loaded_fonts;
 }
@@ -321,5 +327,46 @@ bool FontManager::load_font_with_wide(const std::string& family, float size_px,
 const FontSet& FontManager::get_loaded_fonts() { return s_loaded_fonts; }
 
 ImFont* FontManager::get_wide_font() { return s_wide_font; }
+
+void FontManager::merge_cjk_fallback(ImFontAtlas* atlas, float size_px) {
+    if (!atlas || !s_loaded_fonts.regular) {
+        return;
+    }
+
+    const auto families = get_default_cjk_families();
+    if (families.empty()) {
+        return;
+    }
+
+    int merged_count = 0;
+
+    for (const auto& family : families) {
+        std::string font_path = find_system_font(family, false, false, false);
+        if (font_path.empty()) {
+            continue;
+        }
+
+        ImFontConfig config;
+        config.FontLoaderFlags = ImGuiFreeTypeBuilderFlags_LightHinting;
+        config.MergeMode = true; // Merge glyphs into the primary font atlas
+        config.GlyphRanges = get_cjk_glyph_ranges();
+
+        ImFont* font =
+            atlas->AddFontFromFileTTF(font_path.c_str(), size_px, &config);
+        if (font) {
+            merged_count++;
+            spdlog::info("FontManager: merged CJK fallback font '{}' at {}px",
+                         font_path, size_px);
+        }
+    }
+
+    if (merged_count == 0) {
+        spdlog::warn("FontManager: no CJK fallback fonts found on this "
+                     "system — East Asian characters will not render");
+    } else {
+        spdlog::info("FontManager: merged {} CJK fallback font(s)",
+                     merged_count);
+    }
+}
 
 } // namespace ImApp

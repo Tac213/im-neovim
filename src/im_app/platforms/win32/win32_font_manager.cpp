@@ -30,10 +30,9 @@ static std::string find_font_in_registry(const std::string& family_name,
     std::string value_name_ot = value_name + " (OpenType)";
 
     HKEY hkey;
-    if (::RegOpenKeyExA(
-            HKEY_LOCAL_MACHINE,
-            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts", 0,
-            KEY_READ, &hkey) != ERROR_SUCCESS) {
+    if (::RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+                        R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts)",
+                        0, KEY_READ, &hkey) != ERROR_SUCCESS) {
         return "";
     }
 
@@ -131,6 +130,18 @@ static std::string find_font_hardcoded(const std::string& family_name,
     }
 
     return "";
+}
+
+std::vector<std::string> FontManager::get_default_cjk_families() {
+    // One font per script — each covers a distinct Unicode block.
+    // Family names match Windows Registry entries exactly (verified at
+    // runtime). ImGui merge mode preserves the first-loaded glyph per
+    // codepoint, so CJK ideographs come from YaHei and are not overridden.
+    return {
+        "Microsoft YaHei & Microsoft YaHei UI",  // SC: CJK ideographs
+        "MS Gothic & MS UI Gothic & MS PGothic", // JP: kana
+        "Malgun Gothic",                         // KR: hangul
+    };
 }
 
 std::string FontManager::find_system_font(const std::string& family_name,
