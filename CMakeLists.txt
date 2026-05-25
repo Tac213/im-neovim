@@ -3,6 +3,9 @@ project(ImNeovim VERSION 0.1.0)
 
 add_subdirectory(thirdparty)
 
+include(cmake/InstallLicenses.cmake)
+prepare_license_files()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -241,6 +244,8 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
         "$<TARGET_BUNDLE_CONTENT_DIR:imnvim>/Resources/nvim"
         COMMENT "Bundling Neovim into ImNeovim.app/Contents/Resources/..."
     )
+
+    bundle_licenses_macos()
 endif()
 
 if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
@@ -280,7 +285,7 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "Release")
 endif()
 
 # --- Install rules for Windows shipping (portable folder) ---
-if(WIN32)
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     # Main executable
     install(TARGETS imnvim RUNTIME DESTINATION .)
 
@@ -302,6 +307,9 @@ if(WIN32)
     install(DIRECTORY "${CMAKE_BINARY_DIR}/nvim/"
         DESTINATION nvim
         USE_SOURCE_PERMISSIONS)
+
+    # License files
+    install_license_files()
 endif()
 
 # --- Install rules for Linux shipping (AppImage AppDir) ---
@@ -346,4 +354,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     #
     # The resulting ImNeovim-x86_64.AppImage is a self-contained,
     # portable binary that runs on any modern Linux desktop.
+
+    # License files
+    install_license_files()
 endif()
+
+# --- CPack configuration ---
+set(CPACK_PACKAGE_NAME "ImNeovim")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "ImGui-based graphical user interface for Neovim")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+set(CPACK_PACKAGE_VENDOR "ImNeovim Contributors")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/ImNeovim/ImNeovim")
+include(CPack)

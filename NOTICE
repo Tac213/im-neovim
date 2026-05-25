@@ -1,0 +1,70 @@
+ImNeovim
+Copyright 2024-2026 ImNeovim Contributors
+
+This product is licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+===============================================================================
+Third-Party Notices
+===============================================================================
+
+This product includes software developed by the following third parties:
+
+--------------------------------------------------------------------------------
+FreeType
+--------------------------------------------------------------------------------
+Portions of this software are copyright © 2006-2023 The FreeType Project
+(www.freetype.org).  All rights reserved.
+
+FreeType is distributed under the FreeType License (FTL), a BSD-style license
+with an advertising clause requiring credit to the FreeType Project in product
+documentation.  Alternatively, FreeType may be used under the GNU General
+Public License v2.
+
+The full license texts are available in the licenses/ directory of this
+distribution (freetype-FTL.txt and freetype-FTL-detail.txt).
+
+--------------------------------------------------------------------------------
+Neovim
+--------------------------------------------------------------------------------
+Copyright Neovim contributors. All rights reserved.
+
+Neovim is licensed under the Apache License, Version 2.0, except for parts
+contributed under the Vim license.  Neovim bundles additional third-party
+components: Klib (MIT), Lua (MIT), LuaJIT (MIT), Luv (Apache 2.0), libuv
+(MIT), libvterm (MIT), tree-sitter (MIT), xdiff (LGPL v2), gettext, libiconv,
+and others.  See Neovim's LICENSE.txt (included in licenses/neovim-Apache2.txt)
+for the complete license and attribution details.
+
+================================================================================
+Third-Party Dependency Summary
+================================================================================
+
+The following third-party components are included in this distribution.
+Full license texts are available in the licenses/ directory.
+
+Name                  License                  Copyright Holder
+----                  -------                  ----------------
+fmt                   MIT                      Victor Zverovich and {fmt} contributors
+spdlog                MIT                      Gabi Melman and spdlog contributors
+ImGui                 MIT                      Omar Cornut (2014-2026)
+GLFW                  zlib/libpng              Marcus Geelnard, Camilla Löwy
+GLEW                  BSD 3-Clause             Milan Ikits, Marcelo E. Magallon, Lev Povalahev
+stb                   MIT / Public Domain      Sean Barrett (2017)
+nanosvg               zlib                     Mikko Mononen (2013-2014)
+libvterm              MIT                      Paul Evans (2008)
+DirectX-Headers       MIT                      Microsoft Corporation
+FreeType              FTL or GPLv2             David Turner, Robert Wilhelm, Werner Lemberg
+libuv                 MIT                      libuv project contributors; Joyent, Inc.
+msgpack-c             Boost Software 1.0       FURUHASHI Sadayuki (2008-2015)
+tinyfiledialogs       zlib                     Guillaume Vareille (2014-2025)
+Neovim                Apache 2.0 + Vim         Neovim contributors
