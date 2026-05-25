@@ -303,3 +303,47 @@ if(WIN32)
         DESTINATION nvim
         USE_SOURCE_PERMISSIONS)
 endif()
+
+# --- Install rules for Linux shipping (AppImage AppDir) ---
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Main executable
+    install(TARGETS imnvim RUNTIME DESTINATION .)
+
+    # Bundled Neovim runtime (installed alongside the executable).
+    # The app locates nvim at runtime via: <exe_dir>/nvim/bin/nvim
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/nvim/"
+        DESTINATION nvim
+        USE_SOURCE_PERMISSIONS)
+
+    # --- AppImage metadata files ---
+
+    # Desktop entry (generated from template)
+    set(DESKTOP_FILE_IN "${CMAKE_CURRENT_SOURCE_DIR}/assets/imnvim.desktop.in")
+    set(DESKTOP_FILE_OUT "${CMAKE_CURRENT_BINARY_DIR}/imnvim.desktop")
+    configure_file("${DESKTOP_FILE_IN}" "${DESKTOP_FILE_OUT}" @ONLY)
+    install(FILES "${DESKTOP_FILE_OUT}" DESTINATION .)
+
+    # AppRun entry point script
+    install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/assets/AppRun"
+        DESTINATION .)
+
+    # Application icon (same PNG used on Windows/macOS)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/nvim.png"
+        DESTINATION .
+        RENAME imnvim.png)
+
+    # --- To create the AppImage from the installed AppDir: ---
+    # 1. Build in Release mode:
+    # cmake -B build/Release -DCMAKE_BUILD_TYPE=Release
+    # cmake --build build/Release -j$(nproc) --target imnvim
+    # 2. Install into a staging AppDir:
+    # cmake --install build/Release --prefix build/Release/AppDir
+    # 3. (one-time) Download appimagetool:
+    # wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+    # chmod +x appimagetool-x86_64.AppImage
+    # 4. Package:
+    # ARCH=x86_64 ./appimagetool-x86_64.AppImage build/Release/AppDir ImNeovim-x86_64.AppImage
+    #
+    # The resulting ImNeovim-x86_64.AppImage is a self-contained,
+    # portable binary that runs on any modern Linux desktop.
+endif()

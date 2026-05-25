@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ImNeovim
+Comment=ImGui-based Neovim GUI
+Exec=imnvim
+Icon=imnvim
+Type=Application
+Categories=Development;TextEditor;
+Terminal=false
+Version=@PROJECT_VERSION@
