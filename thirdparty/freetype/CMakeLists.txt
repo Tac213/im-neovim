@@ -29,3 +29,8 @@ option(FT_DISABLE_ZLIB "" ON)
 # Add freetype directly to our build.
 # This defines the freetype target.
 add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/freetype-src ${CMAKE_CURRENT_BINARY_DIR}/freetype-build EXCLUDE_FROM_ALL)
+
+# freetype source contains UTF-8 characters; MSVC requires /utf-8 to avoid C4819 warnings
+if(MSVC)
+    target_compile_options(freetype PRIVATE "/utf-8")
+endif()
