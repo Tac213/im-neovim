@@ -28,4 +28,4 @@ option(FT_DISABLE_ZLIB "" ON)
 
 # Add freetype directly to our build.
 # This defines the freetype target.
-add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/freetype-src ${CMAKE_CURRENT_BINARY_DIR}/freetype-build)
+add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/freetype-src ${CMAKE_CURRENT_BINARY_DIR}/freetype-build EXCLUDE_FROM_ALL)

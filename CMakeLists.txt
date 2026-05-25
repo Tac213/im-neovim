@@ -284,7 +284,18 @@ if(WIN32)
     # Main executable
     install(TARGETS imnvim RUNTIME DESTINATION .)
 
-    # VCRuntime DLLs — resolved from the built binary; system DLLs excluded.
+    # MSVC runtime DLLs — compiler-provided runtime libraries are not part of
+    # $<TARGET_RUNTIME_DLLS:...>, so use CMake's runtime-library helper.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMAKE_INSTALL_DEBUG_LIBRARIES TRUE)
+        set(CMAKE_INSTALL_DEBUG_LIBRARIES_ONLY TRUE)
+    endif()
+
+    include(InstallRequiredSystemLibraries)
+
+    # Runtime DLLs from non-system shared library targets, if any are added later.
     install(FILES $<TARGET_RUNTIME_DLLS:imnvim> DESTINATION .)
 
     # Bundled Neovim runtime (installed alongside the executable)

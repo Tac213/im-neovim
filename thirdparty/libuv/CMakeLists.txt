@@ -23,4 +23,4 @@ endif()
 # This defines the libuv::libuv target.
 option(LIBUV_BUILD_SHARED "" OFF)
 option(UV_LINT_W4 "" OFF)
-add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/libuv-src ${CMAKE_CURRENT_BINARY_DIR}/libuv-build)
+add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/libuv-src ${CMAKE_CURRENT_BINARY_DIR}/libuv-build EXCLUDE_FROM_ALL)
