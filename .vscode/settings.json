@@ -1,6 +1,7 @@
 {
   "cmake.generator": "Ninja",
   "cmake.buildDirectory": "${workspaceFolder}/build/${buildType}",
+  "cmake.installPrefix": "${workspaceFolder}/dist/${buildType}/ImNeovim",
   "clangd.arguments": [
     "--compile-commands-dir=${workspaceFolder}/build/Debug",
     "--completion-style=detailed",
