@@ -25,8 +25,8 @@ git submodule update --init --recursive
 # Configure (Ninja)
 cmake -B build/Release -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-# Build the imnvim target
-cmake --build build/Release --target imnvim
+# Build everything (executable + dependencies)
+cmake --build build/Release
 
 # Install to dist/
 cmake --install build/Release --prefix dist/Release/ImNeovim
@@ -38,8 +38,8 @@ cmake --install build/Release --prefix dist/Release/ImNeovim
 # Configure
 cmake -B build/Release -DCMAKE_BUILD_TYPE=Release
 
-# Build
-cmake --build build/Release -j$(nproc) --target imnvim
+# Build everything
+cmake --build build/Release -j$(nproc)
 
 # Install to dist/
 cmake --install build/Release --prefix dist/Release/ImNeovim
@@ -51,8 +51,8 @@ cmake --install build/Release --prefix dist/Release/ImNeovim
 # Configure
 cmake -B build/Release -DCMAKE_BUILD_TYPE=Release
 
-# Build (produces ImNeovim.app in the build directory)
-cmake --build build/Release -j$(nproc) --target imnvim
+# Build everything (produces ImNeovim.app in the build directory)
+cmake --build build/Release -j$(nproc)
 ```
 
 ## License
