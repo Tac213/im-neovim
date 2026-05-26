@@ -59,6 +59,12 @@ class NvimWidget : public TextWidget,
     /// Returns true if the current buffer has unsaved modifications.
     bool has_modified_buffers() const { return m_buffer_modified; }
 
+    /// Returns the Neovim version string (e.g. "NVIM v0.10.2").
+    /// Empty until nvim_get_api_info responds.
+    const std::string& nvim_version_string() const {
+        return m_nvim_version_string;
+    }
+
     // Docking support
     void set_dock_id(ImGuiID dock_id) { m_dock_id = dock_id; }
     ImGuiID get_dock_id() const { return m_dock_id; }
@@ -310,6 +316,7 @@ class NvimWidget : public TextWidget,
     uint64_t m_nvim_channel{0};
     uint64_t m_nvim_api_compatible{0};
     uint64_t m_nvim_api_level{0};
+    std::string m_nvim_version_string;
     std::vector<std::string> m_nvim_ui_options;
     bool m_nvim_attached{false};
     bool m_nvim_exited{false};

@@ -1,6 +1,21 @@
 cmake_minimum_required(VERSION 3.24)
 project(ImNeovim VERSION 0.1.0)
 
+# -- Capture build metadata --
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE IMNVIM_GIT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+if(NOT IMNVIM_GIT_SHA)
+    set(IMNVIM_GIT_SHA "unknown")
+endif()
+
+string(TIMESTAMP IMNVIM_BUILD_DATE "%Y-%m-%d %H:%M:%S UTC" UTC)
+
 add_subdirectory(thirdparty)
 
 include(cmake/InstallLicenses.cmake)
@@ -193,6 +208,8 @@ set(im_neovim_private_files
     "${im_neovim_dir}/gui/nvim_input.cpp"
     "${im_neovim_dir}/gui/file_tree_widget.cpp"
     "${im_neovim_dir}/gui/dock_space_layout.cpp"
+    "${im_neovim_dir}/gui/about_panel.cpp"
+    "${im_neovim_private_header_dir}/im_neovim/gui/about_panel.h"
     "${im_neovim_dir}/layers/layer_libuv.h"
     "${im_neovim_dir}/layers/layer_libuv.cpp"
     "${im_neovim_dir}/layers/layer_main_window.h"
@@ -218,7 +235,110 @@ target_include_directories(
     imnvim
     PRIVATE
     ${im_neovim_private_header_dir}
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
+
+# -- Generate build_config.h from template --
+set(BUILD_CONFIG_IN "${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_config.h.in")
+set(BUILD_CONFIG_OUT
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/im_neovim/build_config.h")
+configure_file("${BUILD_CONFIG_IN}" "${BUILD_CONFIG_OUT}" @ONLY)
+
+# -- Parse assets/imnvim.assets and generate embedded asset headers --
+set(IMNVIM_ASSETS_RC "${CMAKE_CURRENT_SOURCE_DIR}/assets/imnvim.assets")
+
+if(EXISTS "${IMNVIM_ASSETS_RC}")
+    file(STRINGS "${IMNVIM_ASSETS_RC}" ASSET_LINES)
+    set(ASSET_HEADERS "")
+    set(ASSET_REGISTRATIONS "")
+
+    foreach(line IN LISTS ASSET_LINES)
+        string(STRIP "${line}" line)
+
+        if(line STREQUAL "" OR line MATCHES "^#")
+            continue()
+        endif()
+
+        # Parse: TYPE VIRTUAL_PATH SOURCE_PATH
+        if(line MATCHES "^(IMAGE|FONT) +([^ ]+) +(.+)$")
+            set(ASSET_TYPE "${CMAKE_MATCH_1}")
+            set(ASSET_VPATH "${CMAKE_MATCH_2}")
+            set(ASSET_SPATH "${CMAKE_MATCH_3}")
+
+            if(ASSET_TYPE STREQUAL "IMAGE")
+                # Read the source file as hex
+                file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${ASSET_SPATH}"
+                    ASSET_HEX HEX)
+
+                # Convert hex string to C array: "89504e47..." → "0x89, 0x50,
+                # ..."
+                string(REGEX REPLACE "([0-9a-fA-F][0-9a-fA-F])" "0x\\1, "
+                    ASSET_HEX_ARR "${ASSET_HEX}")
+
+                # Sanitize virtual path to a valid C identifier
+                string(REGEX REPLACE "[:/\\.-]" "_" ASSET_SYMBOL
+                    "${ASSET_VPATH}")
+
+                # Strip leading underscores
+                string(REGEX REPLACE "^_+" "" ASSET_SYMBOL
+                    "${ASSET_SYMBOL}")
+
+                # Strip trailing comma+space from hex array
+                string(REGEX REPLACE ", $" "" ASSET_HEX_ARR
+                    "${ASSET_HEX_ARR}")
+
+                set(ASSET_HEADER
+                    "${CMAKE_CURRENT_BINARY_DIR}/generated/imnvim_assets/${ASSET_SYMBOL}.h"
+                )
+
+                # Generate per-asset header
+                file(WRITE "${ASSET_HEADER}"
+                    "#pragma once\n"
+                    "#include <cstddef>\n"
+                    "static const unsigned char ${ASSET_SYMBOL}[] = { ${ASSET_HEX_ARR} };\n"
+                    "static const size_t ${ASSET_SYMBOL}_size = sizeof(${ASSET_SYMBOL});\n"
+                )
+
+                list(APPEND ASSET_HEADERS "${ASSET_SYMBOL}.h")
+                list(APPEND ASSET_REGISTRATIONS
+                    "    ImApp::ImageManager::register_embedded_image(\"${ASSET_VPATH}\", ${ASSET_SYMBOL}, ${ASSET_SYMBOL}_size)"
+                )
+            endif()
+        endif()
+    endforeach()
+
+    # Generate master header with registration macro
+    set(MASTER_HEADER
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/imnvim_assets/imnvim_assets.h")
+    set(ASSET_INCLUDES "")
+
+    foreach(hdr IN LISTS ASSET_HEADERS)
+        string(APPEND ASSET_INCLUDES
+            "#include \"imnvim_assets/${hdr}\"\n")
+    endforeach()
+
+    # Build registration body with \ line continuations in the template.
+    # Each registration is plain (no trailing \), the template provides them.
+    # Use a real newline character as the join separator.
+    string(ASCII 10 LF)
+    string(JOIN "${LF}" ASSET_REG_BODY ${ASSET_REGISTRATIONS})
+
+    # Use bracket argument + string(CONFIGURE) to avoid CMake escape issues
+    # with backslash-newline continuations in the generated C macro.
+    # The ; is in the template (not in ASSET_REG_BODY) because CMake treats
+    # semicolons as list separators.
+    set(MASTER_TEMPLATE [=[
+#pragma once
+#include <im_app/image_manager.h>
+@ASSET_INCLUDES@
+#define IMNVIM_REGISTER_EMBEDDED_ASSETS() \
+    do { \
+@ASSET_REG_BODY@;\
+    } while(0)
+]=])
+    string(CONFIGURE "${MASTER_TEMPLATE}" MASTER_CONTENT @ONLY)
+    file(WRITE "${MASTER_HEADER}" "${MASTER_CONTENT}")
+endif()
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
     set_target_properties(imnvim PROPERTIES

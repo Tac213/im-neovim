@@ -20,6 +20,8 @@ class WGLContext : public GraphicsContext {
                                     uint32_t height) override;
     virtual void destroy_texture(uint64_t texture_id) override;
 
+    virtual const char* get_backend_name() const override;
+
     bool create_device(HWND hwnd, HDC& hdc);
     static void cleanup_device(HWND hwnd, HDC& hdc);
     bool make_current(HDC& hdc);
@@ -34,6 +36,7 @@ class WGLContext : public GraphicsContext {
   private:
     int m_major_version;
     int m_minor_version;
+    mutable std::string m_backend_name;
     HWND m_hwnd;
     HDC m_hdc;
     HGLRC m_hrc = nullptr;

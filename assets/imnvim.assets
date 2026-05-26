@@ -1,0 +1,9 @@
+# Embedded asset registry for ImNeovim.
+# Format: TYPE VIRTUAL_PATH SOURCE_PATH
+#   TYPE: IMAGE (future: FONT)
+#   VIRTUAL_PATH: virtual path starting with :/imnvim/assets/
+#   SOURCE_PATH: relative to repository root
+#
+# Lines starting with # are comments.  Blank lines are ignored.
+
+IMAGE :/imnvim/assets/nvim.png assets/nvim.png

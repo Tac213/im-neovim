@@ -1,4 +1,5 @@
 #include "glfw_context.h"
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 namespace ImApp {
@@ -40,6 +41,9 @@ void GlfwContext::initialize() {
                  reinterpret_cast<const char*>(gl_version_string),
                  reinterpret_cast<const char*>(gl_renderer));
 
+    m_backend_name =
+        fmt::format("OpenGL {}.{} (GLFW)", m_major_version, m_minor_version);
+
     if (m_major_version >= 4 && m_minor_version >= 3) {
         glEnable(GL_DEBUG_OUTPUT);
         glDebugMessageCallback(debug_callback, nullptr);
@@ -48,6 +52,10 @@ void GlfwContext::initialize() {
 }
 
 void GlfwContext::finalize() {}
+
+const char* GlfwContext::get_backend_name() const {
+    return m_backend_name.c_str();
+}
 
 void GlfwContext::swap_buffers() {
     if (m_window) {

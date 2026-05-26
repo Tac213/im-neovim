@@ -586,7 +586,7 @@ void NvimWidget::_spawn_nvim() {
     options.file = m_nvim_exe.c_str();
     options.args = args;
     options.cwd = m_nvim_cwd.c_str();
-    options.flags = UV_PROCESS_WINDOWS_HIDE;  // no console for --embed nvim
+    options.flags = UV_PROCESS_WINDOWS_HIDE; // no console for --embed nvim
     options.env = nullptr;
     options.stdio_count = 3;
     options.stdio = nvim_stdio;
@@ -631,6 +631,12 @@ void NvimWidget::_spawn_nvim() {
                     if (value.type != msgpack::type::MAP) {
                         continue;
                     }
+                    // Temporary values to build version from components
+                    uint64_t version_major = 0;
+                    uint64_t version_minor = 0;
+                    uint64_t version_patch = 0;
+                    bool version_prerelease = false;
+
                     for (size_t j = 0; j < value.via.map.size; j++) {
                         auto& version_kv_pair = value.via.map.ptr[j];
                         auto& version_key = version_kv_pair.key;
@@ -649,7 +655,32 @@ void NvimWidget::_spawn_nvim() {
                                    version_value.type ==
                                        msgpack::type::POSITIVE_INTEGER) {
                             m_nvim_api_level = version_value.as<uint64_t>();
+                        } else if (strcmp(version_k.c_str(), "major") == 0 &&
+                                   version_value.type ==
+                                       msgpack::type::POSITIVE_INTEGER) {
+                            version_major = version_value.as<uint64_t>();
+                        } else if (strcmp(version_k.c_str(), "minor") == 0 &&
+                                   version_value.type ==
+                                       msgpack::type::POSITIVE_INTEGER) {
+                            version_minor = version_value.as<uint64_t>();
+                        } else if (strcmp(version_k.c_str(), "patch") == 0 &&
+                                   version_value.type ==
+                                       msgpack::type::POSITIVE_INTEGER) {
+                            version_patch = version_value.as<uint64_t>();
+                        } else if (strcmp(version_k.c_str(), "prerelease") ==
+                                       0 &&
+                                   version_value.type ==
+                                       msgpack::type::BOOLEAN) {
+                            version_prerelease = version_value.as<bool>();
                         }
+                    }
+
+                    // Build the human-readable version string
+                    m_nvim_version_string =
+                        fmt::format("NVIM v{}.{}.{}", version_major,
+                                    version_minor, version_patch);
+                    if (version_prerelease) {
+                        m_nvim_version_string += "-dev";
                     }
                 } else if (strcmp(k.c_str(), "ui_options") == 0) {
                     if (value.type != msgpack::type::ARRAY) {

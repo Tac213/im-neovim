@@ -1,6 +1,7 @@
 #include "wgl_context.h"
 #include "win32_window.h"
 #include <GL/glew.h>
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 
@@ -49,6 +50,9 @@ void WGLContext::initialize() {
                  reinterpret_cast<const char*>(gl_version_string),
                  reinterpret_cast<const char*>(gl_renderer));
 
+    m_backend_name =
+        fmt::format("OpenGL {}.{} (WGL)", m_major_version, m_minor_version);
+
     if (m_major_version >= 4 && m_minor_version >= 3) {
         glEnable(GL_DEBUG_OUTPUT);
         glDebugMessageCallback(debug_callback, nullptr);
@@ -62,6 +66,10 @@ void WGLContext::finalize() {
 }
 
 void WGLContext::swap_buffers() { ::SwapBuffers(m_hdc); }
+
+const char* WGLContext::get_backend_name() const {
+    return m_backend_name.c_str();
+}
 
 bool WGLContext::create_device(HWND hwnd, HDC& hdc) {
     HDC temp_hdc = ::GetDC(hwnd);

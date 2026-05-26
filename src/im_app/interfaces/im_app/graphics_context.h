@@ -28,6 +28,10 @@ class GraphicsContext {
     /// @param texture_id  Handle returned by create_texture().
     virtual void destroy_texture(uint64_t texture_id) = 0;
 
+    /// Human-readable name of the active graphics backend.
+    /// E.g. "DirectX 12", "OpenGL 4.6 (WGL)", "Metal".
+    virtual const char* get_backend_name() const = 0;
+
     static std::shared_ptr<GraphicsContext>
     create(std::shared_ptr<Window> window, GraphicsBackend backend);
 };

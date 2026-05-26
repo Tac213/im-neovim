@@ -95,6 +95,9 @@ class DockSpaceLayout {
     /// Emitted when File > Exit is clicked.
     Signal<> on_exit;
 
+    /// Emitted when Help > About is clicked.
+    Signal<> on_about;
+
   private:
     bool m_initialized{false};
     bool m_pending_reset{false};

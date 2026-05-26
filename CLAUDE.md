@@ -134,6 +134,30 @@ on_file_opened.disconnect(conn_id);
 - The `emit()` method creates a copy of the connection map to allow safe reentrant modifications
 - Empty/null callbacks are filtered during connection and skipped during emission
 
+### Embedded Asset System (`assets/imnvim.assets`)
+
+Assets (images, and in the future fonts) can be compiled directly into the binary via the manifest file `assets/imnvim.assets`.
+
+**Format** — line-based registry:
+```
+# Comment
+IMAGE :/imnvim/assets/nvim.png assets/nvim.png
+```
+Each line specifies `TYPE VIRTUAL_PATH SOURCE_PATH`.
+
+**Virtual paths** use the `:/imnvim/assets/...` scheme (Qt-resource style). This virtual path is the key used with `ImageManager::load()` and `register_embedded_image()`.
+
+**Build process**:
+1. At CMake configure time, `imnvim.assets` is parsed.
+2. For each `IMAGE` entry, the source file is hex-encoded into a generated `.h` file in `generated/imnvim_assets/`.
+3. A master header `imnvim_assets.h` is generated with the `IMNVIM_REGISTER_EMBEDDED_ASSETS()` macro.
+4. `im_neovim_app.cpp` calls `IMNVIM_REGISTER_EMBEDDED_ASSETS()` in `create_im_app()` before any layers are created, registering every asset into the `ImageManager` embedded dictionary.
+
+**Adding a new embedded asset**:
+1. Add an `IMAGE` line to `assets/imnvim.assets`.
+2. Re-run CMake configure (the generated headers and macro update automatically).
+3. Load the asset at runtime with `ImageManager::load(":/imnvim/assets/your_file.png")`.
+
 ## Development Workflow
 
 ### Code Style

@@ -66,6 +66,10 @@ class Application {
         return m_graphics_context;
     }
 
+    /// Human-readable name of the active graphics backend (e.g. "DirectX 12").
+    /// Returns "Unknown" if the graphics context is not yet initialized.
+    const char* get_backend_name() const;
+
   private:
     AppSpec m_app_spec;
     std::vector<std::shared_ptr<Layer>> m_layer_stack;

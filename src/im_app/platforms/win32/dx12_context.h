@@ -49,6 +49,10 @@ class D3D12Context : public GraphicsContext {
                                     uint32_t height) override;
     virtual void destroy_texture(uint64_t texture_id) override;
 
+    virtual const char* get_backend_name() const override {
+        return "DirectX 12";
+    }
+
     HWND get_hwnd() const { return m_hwnd; }
     ComPtr<ID3D12Device> get_device() const { return m_device; }
     ComPtr<ID3D12CommandQueue> get_command_queue() const {

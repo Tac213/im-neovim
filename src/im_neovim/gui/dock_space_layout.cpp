@@ -93,6 +93,12 @@ void DockSpaceLayout::render() {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Help")) {
+            if (ImGui::MenuItem("About")) {
+                on_about.emit();
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMenuBar();
     }
 

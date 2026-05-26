@@ -4,6 +4,7 @@
 #include "im_neovim/gui/nvim_widget.h"
 #include "im_neovim/gui/file_tree_widget.h"
 #include "im_neovim/gui/dock_space_layout.h"
+#include "im_neovim/gui/about_panel.h"
 // clang-format on
 #include <im_app/layer.h>
 #include <memory>
@@ -28,6 +29,9 @@ class LayerMainWindow : public ImApp::Layer {
 
     // Exit modal state
     bool m_exit_modal_active{false};
+
+    // About panel
+    AboutPanel m_about_panel;
 
     void _show_exit_modal();
     void _render_exit_modal();

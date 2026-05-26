@@ -16,9 +16,12 @@ class GlfwContext : public GraphicsContext {
                                     uint32_t height) override;
     virtual void destroy_texture(uint64_t texture_id) override;
 
+    virtual const char* get_backend_name() const override;
+
   private:
     std::shared_ptr<GlfwWindow> m_window;
     int m_major_version;
     int m_minor_version;
+    mutable std::string m_backend_name;
 };
 } // namespace ImApp

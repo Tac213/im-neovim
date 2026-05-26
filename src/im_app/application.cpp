@@ -72,6 +72,13 @@ void Application::request_exit() { m_exit_requested = true; }
 
 void Application::cancel_exit() { m_exit_requested = false; }
 
+const char* Application::get_backend_name() const {
+    if (m_graphics_context) {
+        return m_graphics_context->get_backend_name();
+    }
+    return "Unknown";
+}
+
 void Application::_initialize() {
     initialize_spdlog();
     WindowProps window_props = {m_app_spec.name, m_app_spec.main_window_width,

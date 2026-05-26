@@ -79,6 +79,18 @@ Use `#pragma once` (not `#ifndef` guards).
 - `ImageManager::load_svg(path, w, h)` — nanosvg rasterization
 - Images are **caller-owned**: call `free_image()` when done
 
+### Embedded Assets (`assets/imnvim.assets`)
+- Manifest file listing all compile-time embedded assets (images; fonts planned)
+- **Format**: line-based `TYPE VIRTUAL_PATH SOURCE_PATH` (# for comments, blank lines ignored)
+  ```
+  IMAGE :/imnvim/assets/my_icon.png assets/my_icon.png
+  ```
+- **Virtual path scheme**: `:/imnvim/assets/...` — mirrors Qt's resource system
+- **Build-time**: CMake parses `imnvim.assets` at configure time, hex-encodes each source file into a generated `.h` byte-array header under `generated/imnvim_assets/`, and produces `imnvim_assets.h` with the `IMNVIM_REGISTER_EMBEDDED_ASSETS()` macro
+- **Registration**: `IMNVIM_REGISTER_EMBEDDED_ASSETS()` is called in `create_im_app()` before layers are pushed; it calls `ImageManager::register_embedded_image()` for each asset
+- **Usage**: load any registered asset by its virtual path: `ImageManager::load(":/imnvim/assets/my_icon.png")`
+- **Adding an asset**: add an `IMAGE` line to `imnvim.assets`, re-run CMake — no C++ code changes needed
+
 ### FontManager (font loading — reference pattern)
 - `include/im_app/font_manager.h` — static API class
 - Platform hook: `find_system_font()` implemented per-platform

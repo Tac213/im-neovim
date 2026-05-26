@@ -44,6 +44,9 @@ void LayerMainWindow::on_attach() {
         // File > Exit
         m_dock_layout->on_exit.connect([]() { IM_APP.request_exit(); });
 
+        // Help > About
+        m_dock_layout->on_about.connect([this]() { m_about_panel.show(); });
+
         // File > Open Folder...
         std::weak_ptr<FileTreeWidget> weak_file_tree{m_file_tree};
         std::weak_ptr<NvimWidget> weak_nvim_for_cd{m_nvim};
@@ -144,6 +147,10 @@ void LayerMainWindow::on_imgui_render() {
     if (m_exit_modal_active) {
         _render_exit_modal();
     }
+
+    // Render about panel.
+    m_about_panel.render(m_nvim ? m_nvim->nvim_version_string()
+                                : std::string{});
 
     // Handle pending layout reset after all rendering is done
     if (m_dock_layout && m_dock_layout->is_reset_pending()) {

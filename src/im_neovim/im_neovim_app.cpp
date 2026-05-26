@@ -2,6 +2,7 @@
 #include "layers/layer_main_window.h"
 // clang-format on
 #include "im_neovim/logging.h"
+#include "imnvim_assets/imnvim_assets.h"
 #include "layers/layer_libuv.h"
 #include <im_app/application.h>
 #include <im_app/file_system.h>
@@ -49,6 +50,8 @@ static void initialize_logger() {
 
 namespace ImApp {
 Application* create_im_app(int argc, char** argv) {
+    IMNVIM_REGISTER_EMBEDDED_ASSETS();
+
     AppSpec app_spec{.name = "ImNeovim", .main_window_no_border = false};
     auto* app = new Application(app_spec);
     ImNeovim::initialize_logger();

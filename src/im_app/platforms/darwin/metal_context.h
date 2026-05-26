@@ -23,6 +23,8 @@ class MetalContext : public GraphicsContext {
                                     uint32_t height) override;
     virtual void destroy_texture(uint64_t texture_id) override;
 
+    virtual const char* get_backend_name() const override { return "Metal"; }
+
     id<MTLDevice> get_device() const { return m_device; }
     id<MTLCommandQueue> get_command_queue() const { return m_command_queue; }
     CAMetalLayer* get_layer() const { return m_layer; }
