@@ -479,6 +479,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     install_license_files()
 endif()
 
+# --- Install rules for macOS shipping (.app bundle → .dmg) ---
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    # The .app bundle is self-contained: Neovim runtime and licenses are
+    # already copied into the bundle via POST_BUILD steps.  Only the
+    # bundle itself needs to be installed.
+    install(TARGETS imnvim BUNDLE DESTINATION .)
+endif()
+
 # --- CPack configuration ---
 set(CPACK_PACKAGE_NAME "ImNeovim")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
@@ -488,4 +496,12 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 set(CPACK_PACKAGE_VENDOR "ImNeovim Contributors")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/ImNeovim/ImNeovim")
+
+# -- macOS: produce a .dmg disk image via the DragNDrop generator --
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "ImNeovim")
+    set(CPACK_DMG_FORMAT "UDZO")
+endif()
+
 include(CPack)
