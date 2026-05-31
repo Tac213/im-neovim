@@ -163,6 +163,18 @@ class NvimWidget : public TextWidget,
     void _cmdline_block_append(msgpack::object_array& args);
     void _cmdline_block_hide(msgpack::object_array& args);
 
+    /* Message event handlers (ext_messages) */
+    void _redraw_msg_show(msgpack::object_array& args);
+    void _redraw_msg_clear(msgpack::object_array& args);
+    void _redraw_msg_showmode(msgpack::object_array& args);
+    void _redraw_msg_showcmd(msgpack::object_array& args);
+    void _redraw_msg_ruler(msgpack::object_array& args);
+    void _redraw_msg_history_show(msgpack::object_array& args);
+    void _render_message_area(ImDrawList* draw_list, const ImVec2& pos,
+                              float char_width, float line_height);
+    // Returns the number of rows currently occupied by the message area.
+    uint32_t _message_area_rows() const;
+
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
     static void _on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
@@ -257,6 +269,20 @@ class NvimWidget : public TextWidget,
         int raw_hl_id{0};
     };
 
+    // Message content chunk (ext_messages): [attr_id, text, hl_id]
+    struct MessageChunk {
+        int attr_id{0};
+        std::string text;
+        int hl_id{0};
+    };
+
+    // Accumulated message entry (one per msg_show event)
+    struct MessageEntry {
+        std::string kind;
+        std::vector<MessageChunk> content;
+        bool append{false};
+    };
+
     // Grid and highlight state
     std::unordered_map<uint32_t, Grid> m_grids;
     uint32_t m_current_grid{1};
@@ -334,6 +360,23 @@ class NvimWidget : public TextWidget,
     std::string m_cmdline_prompt;
     std::string m_cmdline_special_char;
     bool m_cmdline_special_shift{false};
+
+    // Message area state (ext_messages)
+    bool m_msg_visible{false};
+    std::vector<MessageEntry> m_msg_entries;
+    std::string m_msg_kind; // Kind of the last/active message
+    // showmode / showcmd / ruler
+    bool m_msg_showmode_visible{false};
+    std::vector<MessageChunk> m_msg_showmode_content;
+    bool m_msg_showcmd_visible{false};
+    std::vector<MessageChunk> m_msg_showcmd_content;
+    bool m_msg_ruler_visible{false};
+    std::vector<MessageChunk> m_msg_ruler_content;
+    // History
+    bool m_msg_history_visible{false};
+    std::vector<MessageEntry> m_msg_history_entries;
+    bool m_msg_history_prev_cmd{false};
+    int m_msg_history_scroll{0};
 
     // Multigrid protocol state
     bool m_multigrid_enabled{false};

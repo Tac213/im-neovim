@@ -240,6 +240,10 @@ void NvimWidget::render() {
 
         _render_grid(draw_list, pos, char_width, line_height);
 
+        if (m_msg_visible || m_msg_history_visible) {
+            _render_message_area(draw_list, pos, char_width, line_height);
+        }
+
         if (m_cmdline_visible) {
             _render_cmdline(draw_list, pos, char_width, line_height);
         }
@@ -276,7 +280,12 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
 
     // When the cmdline is visible, skip the last row — it is reserved for the
     // command line (matching nvim TUI behaviour).
-    uint32_t render_rows = m_cmdline_visible ? grid.height - 1 : grid.height;
+    // When messages are visible, skip additional rows above the cmdline.
+    uint32_t msg_rows = _message_area_rows();
+    uint32_t cmdline_rows = m_cmdline_visible ? 1 : 0;
+    uint32_t render_rows = (grid.height > cmdline_rows + msg_rows)
+                               ? grid.height - cmdline_rows - msg_rows
+                               : grid.height;
 
     // Draw all cells
     for (uint32_t y = 0; y < render_rows; y++) {
@@ -433,7 +442,8 @@ void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
     Grid& grid = it->second;
     float effective_line_height = line_height + static_cast<float>(m_linespace);
 
-    // The cmdline occupies the last row of the widget.
+    // The cmdline occupies the absolute last row of the widget. The message
+    // area (if visible) sits between the grid content and the cmdline.
     float cmdline_y = pos.y + (grid.height - 1) * effective_line_height;
 
     // Build the full display text and apply highlighting chunks.
@@ -1004,7 +1014,7 @@ void NvimWidget::_initialize() {
         nullptr);
     req->arg_uint32(m_state.col);
     req->arg_uint32(m_state.row);
-    req->arg_map(4);
+    req->arg_map(5);
     {
         std::string rgb_key{"rgb"};
         req->arg_str(rgb_key.size());
@@ -1024,6 +1034,11 @@ void NvimWidget::_initialize() {
         std::string popupmenu_key{"ext_popupmenu"};
         req->arg_str(popupmenu_key.size());
         req->arg_str_body(popupmenu_key.c_str(), popupmenu_key.size());
+        req->arg_true();
+
+        std::string messages_key{"ext_messages"};
+        req->arg_str(messages_key.size());
+        req->arg_str_body(messages_key.c_str(), messages_key.size());
         req->arg_true();
     }
     m_multigrid_enabled = true;
@@ -1213,6 +1228,24 @@ void NvimWidget::_handle_nvim_redraw(std::string_view operation,
         break;
     case _hash("cmdline_block_hide"):
         _cmdline_block_hide(args);
+        break;
+    case _hash("msg_show"):
+        _redraw_msg_show(args);
+        break;
+    case _hash("msg_clear"):
+        _redraw_msg_clear(args);
+        break;
+    case _hash("msg_showmode"):
+        _redraw_msg_showmode(args);
+        break;
+    case _hash("msg_showcmd"):
+        _redraw_msg_showcmd(args);
+        break;
+    case _hash("msg_ruler"):
+        _redraw_msg_ruler(args);
+        break;
+    case _hash("msg_history_show"):
+        _redraw_msg_history_show(args);
         break;
     default:
         LOG_TRACE("Unhandled redraw operation: {}", operation);
@@ -2367,6 +2400,530 @@ void NvimWidget::_cmdline_block_hide(msgpack::object_array& /*args*/) {
     LOG_DEBUG("cmdline_block_hide: not yet implemented");
 }
 
+// =========================================================================
+// Message event handlers (ext_messages)
+// =========================================================================
+
+void NvimWidget::_redraw_msg_show(msgpack::object_array& args) {
+    if (args.size < 7) {
+        LOG_WARN("msg_show: expected at least 7 arguments, got {}", args.size);
+        return;
+    }
+
+    // Parse kind (0)
+    std::string kind;
+    if (args.ptr[0].type == msgpack::type::STR) {
+        kind = args.ptr[0].as<std::string>();
+    }
+
+    // Parse content (1): Array of [attr_id, text, hl_id] tuples
+    std::vector<MessageChunk> chunks;
+    if (args.ptr[1].type == msgpack::type::ARRAY) {
+        msgpack::object_array& content_arr = args.ptr[1].via.array;
+        chunks.reserve(content_arr.size);
+        for (size_t i = 0; i < content_arr.size; i++) {
+            if (content_arr.ptr[i].type != msgpack::type::ARRAY ||
+                content_arr.ptr[i].via.array.size < 3) {
+                continue;
+            }
+            msgpack::object_array& chunk = content_arr.ptr[i].via.array;
+            MessageChunk c;
+            if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+                c.attr_id = static_cast<int>(chunk.ptr[0].as<uint32_t>());
+            } else if (chunk.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.attr_id = chunk.ptr[0].as<int32_t>();
+            }
+            if (chunk.ptr[1].type == msgpack::type::STR) {
+                c.text = chunk.ptr[1].as<std::string>();
+            }
+            if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+                c.hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+            } else if (chunk.ptr[2].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.hl_id = chunk.ptr[2].as<int32_t>();
+            }
+            chunks.push_back(std::move(c));
+        }
+    }
+
+    // Parse replace_last (2)
+    bool replace_last = false;
+    if (args.ptr[2].type == msgpack::type::BOOLEAN) {
+        replace_last = args.ptr[2].as<bool>();
+    }
+
+    // Parse history (3) — stored for potential future use
+    // bool history = false;
+    // if (args.ptr[3].type == msgpack::type::BOOLEAN) {
+    //     history = args.ptr[3].as<bool>();
+    // }
+
+    // Parse append (4)
+    bool append = false;
+    if (args.ptr[4].type == msgpack::type::BOOLEAN) {
+        append = args.ptr[4].as<bool>();
+    }
+
+    // Parse id (5) — stored for potential future use
+    // (msgpack object, can be Integer or String)
+    // int64_t msg_id = 0;
+    // if (args.ptr[5].type == msgpack::type::POSITIVE_INTEGER) {
+    //     msg_id = args.ptr[5].as<int64_t>();
+    // }
+
+    // Parse trigger (6)
+    // std::string trigger;
+    // if (args.ptr[6].type == msgpack::type::STR) {
+    //     trigger = args.ptr[6].as<std::string>();
+    // }
+
+    // Apply append: merge into the last entry if append is set
+    if (append && !m_msg_entries.empty()) {
+        auto& last = m_msg_entries.back();
+        last.content.insert(last.content.end(),
+                            std::make_move_iterator(chunks.begin()),
+                            std::make_move_iterator(chunks.end()));
+        last.kind = kind; // Update kind to the appended message's kind
+    } else if (replace_last && !m_msg_entries.empty()) {
+        // Replace the last entry in place
+        m_msg_entries.back().kind = kind;
+        m_msg_entries.back().content = std::move(chunks);
+        m_msg_entries.back().append = append;
+    } else {
+        m_msg_entries.push_back({kind, std::move(chunks), append});
+    }
+
+    m_msg_kind = kind;
+    m_msg_visible = true;
+
+    LOG_TRACE("msg_show: kind='{}', chunks={}, replace_last={}, append={}",
+              kind, chunks.size(), replace_last, append);
+}
+
+void NvimWidget::_redraw_msg_clear(msgpack::object_array& /*args*/) {
+    m_msg_visible = false;
+    m_msg_entries.clear();
+    m_msg_kind.clear();
+    LOG_TRACE("msg_clear");
+}
+
+void NvimWidget::_redraw_msg_showmode(msgpack::object_array& args) {
+    m_msg_showmode_content.clear();
+
+    if (args.size >= 1 && args.ptr[0].type == msgpack::type::ARRAY) {
+        msgpack::object_array& content_arr = args.ptr[0].via.array;
+        m_msg_showmode_content.reserve(content_arr.size);
+        for (size_t i = 0; i < content_arr.size; i++) {
+            if (content_arr.ptr[i].type != msgpack::type::ARRAY ||
+                content_arr.ptr[i].via.array.size < 3) {
+                continue;
+            }
+            msgpack::object_array& chunk = content_arr.ptr[i].via.array;
+            MessageChunk c;
+            if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+                c.attr_id = static_cast<int>(chunk.ptr[0].as<uint32_t>());
+            } else if (chunk.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.attr_id = chunk.ptr[0].as<int32_t>();
+            }
+            if (chunk.ptr[1].type == msgpack::type::STR) {
+                c.text = chunk.ptr[1].as<std::string>();
+            }
+            if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+                c.hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+            } else if (chunk.ptr[2].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.hl_id = chunk.ptr[2].as<int32_t>();
+            }
+            m_msg_showmode_content.push_back(std::move(c));
+        }
+    }
+
+    m_msg_showmode_visible = !m_msg_showmode_content.empty();
+    LOG_TRACE("msg_showmode: visible={}, chunks={}", m_msg_showmode_visible,
+              m_msg_showmode_content.size());
+}
+
+void NvimWidget::_redraw_msg_showcmd(msgpack::object_array& args) {
+    m_msg_showcmd_content.clear();
+
+    if (args.size >= 1 && args.ptr[0].type == msgpack::type::ARRAY) {
+        msgpack::object_array& content_arr = args.ptr[0].via.array;
+        m_msg_showcmd_content.reserve(content_arr.size);
+        for (size_t i = 0; i < content_arr.size; i++) {
+            if (content_arr.ptr[i].type != msgpack::type::ARRAY ||
+                content_arr.ptr[i].via.array.size < 3) {
+                continue;
+            }
+            msgpack::object_array& chunk = content_arr.ptr[i].via.array;
+            MessageChunk c;
+            if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+                c.attr_id = static_cast<int>(chunk.ptr[0].as<uint32_t>());
+            } else if (chunk.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.attr_id = chunk.ptr[0].as<int32_t>();
+            }
+            if (chunk.ptr[1].type == msgpack::type::STR) {
+                c.text = chunk.ptr[1].as<std::string>();
+            }
+            if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+                c.hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+            } else if (chunk.ptr[2].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.hl_id = chunk.ptr[2].as<int32_t>();
+            }
+            m_msg_showcmd_content.push_back(std::move(c));
+        }
+    }
+
+    m_msg_showcmd_visible = !m_msg_showcmd_content.empty();
+    LOG_TRACE("msg_showcmd: visible={}, chunks={}", m_msg_showcmd_visible,
+              m_msg_showcmd_content.size());
+}
+
+void NvimWidget::_redraw_msg_ruler(msgpack::object_array& args) {
+    m_msg_ruler_content.clear();
+
+    if (args.size >= 1 && args.ptr[0].type == msgpack::type::ARRAY) {
+        msgpack::object_array& content_arr = args.ptr[0].via.array;
+        m_msg_ruler_content.reserve(content_arr.size);
+        for (size_t i = 0; i < content_arr.size; i++) {
+            if (content_arr.ptr[i].type != msgpack::type::ARRAY ||
+                content_arr.ptr[i].via.array.size < 3) {
+                continue;
+            }
+            msgpack::object_array& chunk = content_arr.ptr[i].via.array;
+            MessageChunk c;
+            if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+                c.attr_id = static_cast<int>(chunk.ptr[0].as<uint32_t>());
+            } else if (chunk.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.attr_id = chunk.ptr[0].as<int32_t>();
+            }
+            if (chunk.ptr[1].type == msgpack::type::STR) {
+                c.text = chunk.ptr[1].as<std::string>();
+            }
+            if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+                c.hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+            } else if (chunk.ptr[2].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.hl_id = chunk.ptr[2].as<int32_t>();
+            }
+            m_msg_ruler_content.push_back(std::move(c));
+        }
+    }
+
+    m_msg_ruler_visible = !m_msg_ruler_content.empty();
+    LOG_TRACE("msg_ruler: visible={}, chunks={}", m_msg_ruler_visible,
+              m_msg_ruler_content.size());
+}
+
+void NvimWidget::_redraw_msg_history_show(msgpack::object_array& args) {
+    m_msg_history_entries.clear();
+
+    if (args.size < 2) {
+        LOG_WARN("msg_history_show: expected 2 arguments, got {}", args.size);
+        return;
+    }
+
+    // Parse entries (0): Array of [kind, content, append]
+    if (args.ptr[0].type == msgpack::type::ARRAY) {
+        msgpack::object_array& entries_arr = args.ptr[0].via.array;
+        m_msg_history_entries.reserve(entries_arr.size);
+        for (size_t i = 0; i < entries_arr.size; i++) {
+            if (entries_arr.ptr[i].type != msgpack::type::ARRAY ||
+                entries_arr.ptr[i].via.array.size < 3) {
+                continue;
+            }
+            msgpack::object_array& entry_arr = entries_arr.ptr[i].via.array;
+
+            MessageEntry entry;
+
+            // kind (0)
+            if (entry_arr.ptr[0].type == msgpack::type::STR) {
+                entry.kind = entry_arr.ptr[0].as<std::string>();
+            }
+
+            // content (1): Array of [attr_id, text, hl_id]
+            if (entry_arr.ptr[1].type == msgpack::type::ARRAY) {
+                msgpack::object_array& content_arr = entry_arr.ptr[1].via.array;
+                entry.content.reserve(content_arr.size);
+                for (size_t j = 0; j < content_arr.size; j++) {
+                    if (content_arr.ptr[j].type != msgpack::type::ARRAY ||
+                        content_arr.ptr[j].via.array.size < 3) {
+                        continue;
+                    }
+                    msgpack::object_array& chunk = content_arr.ptr[j].via.array;
+                    MessageChunk c;
+                    if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+                        c.attr_id =
+                            static_cast<int>(chunk.ptr[0].as<uint32_t>());
+                    } else if (chunk.ptr[0].type ==
+                               msgpack::type::NEGATIVE_INTEGER) {
+                        c.attr_id = chunk.ptr[0].as<int32_t>();
+                    }
+                    if (chunk.ptr[1].type == msgpack::type::STR) {
+                        c.text = chunk.ptr[1].as<std::string>();
+                    }
+                    if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+                        c.hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+                    } else if (chunk.ptr[2].type ==
+                               msgpack::type::NEGATIVE_INTEGER) {
+                        c.hl_id = chunk.ptr[2].as<int32_t>();
+                    }
+                    entry.content.push_back(std::move(c));
+                }
+            }
+
+            // append (2)
+            if (entry_arr.ptr[2].type == msgpack::type::BOOLEAN) {
+                entry.append = entry_arr.ptr[2].as<bool>();
+            }
+
+            m_msg_history_entries.push_back(std::move(entry));
+        }
+    }
+
+    // Parse prev_cmd (1)
+    if (args.ptr[1].type == msgpack::type::BOOLEAN) {
+        m_msg_history_prev_cmd = args.ptr[1].as<bool>();
+    }
+
+    m_msg_history_visible = true;
+    m_msg_history_scroll = 0;
+    LOG_TRACE("msg_history_show: entries={}, prev_cmd={}",
+              m_msg_history_entries.size(), m_msg_history_prev_cmd);
+}
+
+// =========================================================================
+// Message area rendering
+// =========================================================================
+
+uint32_t NvimWidget::_message_area_rows() const {
+    if (m_msg_history_visible) {
+        // History mode: show entries with scroll, up to reasonable max
+        return std::min(static_cast<uint32_t>(m_msg_history_entries.size()),
+                        uint32_t{10});
+    }
+    if (m_msg_visible) {
+        // Active messages: reserve 1 row for message display
+        return 1;
+    }
+    return 0;
+}
+
+void NvimWidget::_render_message_area(ImDrawList* draw_list, const ImVec2& pos,
+                                      float char_width, float line_height) {
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    Grid& grid = it->second;
+    float effective_line_height = line_height + static_cast<float>(m_linespace);
+
+    uint32_t cmdline_rows = m_cmdline_visible ? 1u : 0u;
+    uint32_t msg_rows = _message_area_rows();
+    if (msg_rows == 0) {
+        return;
+    }
+
+    // The message area starts above the cmdline
+    float msg_y =
+        pos.y + (grid.height - cmdline_rows - msg_rows) * effective_line_height;
+
+    // Render background for the entire message area
+    ImVec2 msg_area_min(pos.x, msg_y);
+    ImVec2 msg_area_max(pos.x + grid.width * char_width,
+                        msg_y + msg_rows * effective_line_height);
+
+    // Determine background color based on message kind
+    ImVec4 msg_bg = m_default_bg;
+    if (m_msg_history_visible) {
+        // History: use a slightly elevated background
+        msg_bg = ImVec4(m_default_bg.x * 1.15f, m_default_bg.y * 1.15f,
+                        m_default_bg.z * 1.15f, 1.0f);
+    } else if (!m_msg_kind.empty()) {
+        // Error kinds: red tint
+        if (m_msg_kind == "emsg" || m_msg_kind == "echoerr" ||
+            m_msg_kind == "lua_error" || m_msg_kind == "rpc_error") {
+            msg_bg = ImVec4(0.25f, 0.05f, 0.05f, 1.0f);
+        } else if (m_msg_kind == "wmsg") {
+            // Warning: yellow tint
+            msg_bg = ImVec4(0.20f, 0.18f, 0.02f, 1.0f);
+        } else if (m_msg_kind == "confirm") {
+            // Confirm: blue tint
+            msg_bg = ImVec4(0.05f, 0.08f, 0.25f, 1.0f);
+        }
+    }
+
+    draw_list->AddRectFilled(msg_area_min, msg_area_max,
+                             ImGui::ColorConvertFloat4ToU32(msg_bg));
+
+    // Draw a subtle separator line above the message area
+    ImU32 sep_color =
+        ImGui::ColorConvertFloat4ToU32(ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+    draw_list->AddLine(ImVec2(msg_area_min.x, msg_area_min.y),
+                       ImVec2(msg_area_max.x, msg_area_min.y), sep_color);
+
+    // --- History mode ---
+    if (m_msg_history_visible) {
+        // Determine which entries to show based on scroll offset
+        int visible_count = static_cast<int>(msg_rows);
+        int total_entries = static_cast<int>(m_msg_history_entries.size());
+        int start_idx =
+            std::max(0, total_entries - visible_count - m_msg_history_scroll);
+        int end_idx = std::min(total_entries, start_idx + visible_count);
+
+        for (int ei = start_idx; ei < end_idx; ei++) {
+            int row = ei - start_idx;
+            float row_y = msg_y + row * effective_line_height;
+            const auto& entry = m_msg_history_entries[ei];
+
+            // Prefix: entry number (1-based from bottom)
+            char prefix[16];
+            snprintf(prefix, sizeof(prefix), "%d: ", ei + 1);
+            float x = pos.x;
+
+            ImU32 prefix_color =
+                ImGui::ColorConvertFloat4ToU32(ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            draw_list->AddText(ImVec2(x, row_y), prefix_color, prefix);
+            x += ImGui::CalcTextSize(prefix).x;
+
+            // Render content chunks
+            for (const auto& chunk : entry.content) {
+                if (chunk.text.empty()) {
+                    continue;
+                }
+
+                ImVec4 fg = m_default_fg;
+                if (chunk.attr_id != 0) {
+                    auto hl_it = m_hl_attrs.find(chunk.attr_id);
+                    if (hl_it != m_hl_attrs.end()) {
+                        fg = hl_it->second.fg;
+                    }
+                }
+
+                ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
+                draw_list->AddText(ImVec2(x, row_y), text_color,
+                                   chunk.text.c_str());
+                x += ImGui::CalcTextSize(chunk.text.c_str()).x;
+            }
+        }
+        return;
+    }
+
+    // --- Normal message mode (single row) ---
+    float msg_row_y = msg_y;
+
+    // Build combined message text from the last visible entry
+    auto& entries = m_msg_entries;
+    if (entries.empty()) {
+        return;
+    }
+
+    float x = pos.x;
+
+    // Render showmode content first (e.g. "-- INSERT --") if visible
+    if (m_msg_showmode_visible) {
+        for (const auto& chunk : m_msg_showmode_content) {
+            if (chunk.text.empty()) {
+                continue;
+            }
+            ImVec4 fg = m_default_fg;
+            if (chunk.attr_id != 0) {
+                auto hl_it = m_hl_attrs.find(chunk.attr_id);
+                if (hl_it != m_hl_attrs.end()) {
+                    fg = hl_it->second.fg;
+                }
+            }
+            // Showmode gets bold appearance
+            ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
+            draw_list->AddText(ImVec2(x, msg_row_y), text_color,
+                               chunk.text.c_str());
+            x += ImGui::CalcTextSize(chunk.text.c_str()).x;
+        }
+        // Separator after showmode
+        if (!entries.empty()) {
+            ImU32 sep =
+                ImGui::ColorConvertFloat4ToU32(ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            draw_list->AddText(ImVec2(x, msg_row_y), sep, "  ");
+            x += ImGui::CalcTextSize("  ").x;
+        }
+    }
+
+    // Render the last message entry's content with highlighting
+    const auto& last_entry = entries.back();
+    for (const auto& chunk : last_entry.content) {
+        if (chunk.text.empty()) {
+            continue;
+        }
+
+        ImVec4 fg = m_default_fg;
+        if (chunk.attr_id != 0) {
+            auto hl_it = m_hl_attrs.find(chunk.attr_id);
+            if (hl_it != m_hl_attrs.end()) {
+                fg = hl_it->second.fg;
+            }
+        }
+
+        ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
+        draw_list->AddText(ImVec2(x, msg_row_y), text_color,
+                           chunk.text.c_str());
+        x += ImGui::CalcTextSize(chunk.text.c_str()).x;
+    }
+
+    // Render showcmd content right-aligned if visible (e.g. partial command)
+    if (m_msg_showcmd_visible && !m_msg_showcmd_content.empty()) {
+        // Recalculate x to right-align showcmd
+        float showcmd_width = 0.0f;
+        for (const auto& chunk : m_msg_showcmd_content) {
+            showcmd_width += ImGui::CalcTextSize(chunk.text.c_str()).x;
+        }
+        float showcmd_x = pos.x + grid.width * char_width - showcmd_width;
+
+        for (const auto& chunk : m_msg_showcmd_content) {
+            if (chunk.text.empty()) {
+                continue;
+            }
+            ImVec4 fg = m_default_fg;
+            if (chunk.attr_id != 0) {
+                auto hl_it = m_hl_attrs.find(chunk.attr_id);
+                if (hl_it != m_hl_attrs.end()) {
+                    fg = hl_it->second.fg;
+                }
+            }
+            ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
+            draw_list->AddText(ImVec2(showcmd_x, msg_row_y), text_color,
+                               chunk.text.c_str());
+            showcmd_x += ImGui::CalcTextSize(chunk.text.c_str()).x;
+        }
+    }
+
+    // Render ruler content right-aligned if visible
+    if (m_msg_ruler_visible && !m_msg_ruler_content.empty()) {
+        float ruler_width = 0.0f;
+        for (const auto& chunk : m_msg_ruler_content) {
+            ruler_width += ImGui::CalcTextSize(chunk.text.c_str()).x;
+        }
+        // Position ruler at the right edge, accounting for showcmd if present
+        float ruler_x = pos.x + grid.width * char_width - ruler_width;
+
+        if (m_msg_showcmd_visible && !m_msg_showcmd_content.empty()) {
+            // Place ruler to the left of showcmd
+            float showcmd_width = 0.0f;
+            for (const auto& chunk : m_msg_showcmd_content) {
+                showcmd_width += ImGui::CalcTextSize(chunk.text.c_str()).x;
+            }
+            ruler_x -= showcmd_width + char_width; // + spacer
+        }
+
+        for (const auto& chunk : m_msg_ruler_content) {
+            if (chunk.text.empty()) {
+                continue;
+            }
+            ImVec4 fg = ImVec4(0.7f, 0.7f, 0.7f, 1.0f); // Dim for ruler
+            ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
+            draw_list->AddText(ImVec2(ruler_x, msg_row_y), text_color,
+                               chunk.text.c_str());
+            ruler_x += ImGui::CalcTextSize(chunk.text.c_str()).x;
+        }
+    }
+}
+
 void NvimWidget::_handle_nvim_gui_event(std::string_view event,
                                         msgpack::object_array& /*args*/) {}
 
@@ -2616,7 +3173,46 @@ void NvimWidget::_handle_nvim_resize() {
 }
 
 void NvimWidget::_handle_keyboard_input() {
-    if (!ImGui::IsWindowFocused() || !m_nvim_attached) {
+    if (!ImGui::IsWindowFocused()) {
+        _flush_pending_input();
+        return;
+    }
+
+    // In message history mode, intercept navigation keys before
+    // forwarding to Neovim.
+    if (m_msg_history_visible) {
+        ImGuiIO& io = ImGui::GetIO();
+        bool dismissed = false;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            ImGui::IsKeyPressed(ImGuiKey_Q)) {
+            dismissed = true;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+                   ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+            dismissed = true;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
+                   ImGui::IsKeyPressed(ImGuiKey_J)) {
+            // Scroll toward newer entries (decrease scroll offset)
+            if (m_msg_history_scroll > 0) {
+                m_msg_history_scroll--;
+            }
+        } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) ||
+                   ImGui::IsKeyPressed(ImGuiKey_K)) {
+            // Scroll toward older entries (increase scroll offset)
+            int max_scroll =
+                std::max(0, static_cast<int>(m_msg_history_entries.size()) -
+                                static_cast<int>(_message_area_rows()));
+            if (m_msg_history_scroll < max_scroll) {
+                m_msg_history_scroll++;
+            }
+        }
+
+        if (dismissed) {
+            m_msg_history_visible = false;
+        }
+        return;
+    }
+
+    if (!m_nvim_attached) {
         _flush_pending_input();
         return;
     }
@@ -2646,7 +3242,7 @@ void NvimWidget::_update_ime_position() {
 
     ImVec2 cursor_screen_pos;
     if (m_cmdline_visible) {
-        // Place IME at the cmdline cursor position (bottom row)
+        // Place IME at the cmdline cursor position (absolute bottom row).
         auto it = m_grids.find(m_current_grid);
         float cmdline_y =
             grid_pos.y +
