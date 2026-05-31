@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stack>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <uv.h>
 #include <vector>
@@ -79,14 +80,15 @@ class NvimWidget : public TextWidget,
     void _spawn_nvim();
     void _initialize();
     void _set_nvim_attached(bool attached);
-    void _handle_nvim_request(const uint32_t& msgid, const char* method,
+    void _handle_nvim_request(uint32_t msgid, std::string_view method,
                               msgpack::object_array& args);
-    void _handle_nvim_notification(const char* event,
+    void _handle_nvim_notification(std::string_view event,
                                    msgpack::object_array& args);
 
-    void _handle_nvim_redraw(const char* operation,
+    void _handle_nvim_redraw(std::string_view operation,
                              msgpack::object_array& args);
-    void _handle_nvim_gui_event(const char* event, msgpack::object_array& args);
+    void _handle_nvim_gui_event(std::string_view event,
+                                msgpack::object_array& args);
 
     /* GUI-related methods */
     void _check_font_size_changed();

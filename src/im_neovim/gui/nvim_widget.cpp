@@ -8,6 +8,18 @@
 #include <im_app/font_manager.h>
 #include <imgui_internal.h>
 
+namespace {
+
+// djb2 compile-time string hash for O(1) switch-based dispatch.
+[[nodiscard]] constexpr uint32_t _hash(std::string_view s) noexcept {
+    uint32_t h = 5381;
+    for (char c : s)
+        h = ((h << 5) + h) + static_cast<uint32_t>(c);
+    return h;
+}
+
+} // namespace
+
 namespace ImNeovim {
 
 // HighlightAttr implementation
@@ -1024,12 +1036,13 @@ void NvimWidget::_set_nvim_attached(bool attached) {
     }
 }
 
-void NvimWidget::_handle_nvim_request(const uint32_t& msgid, const char* method,
+void NvimWidget::_handle_nvim_request(uint32_t msgid, std::string_view method,
                                       msgpack::object_array& args) {}
 
-void NvimWidget::_handle_nvim_notification(const char* event,
+void NvimWidget::_handle_nvim_notification(std::string_view event,
                                            msgpack::object_array& args) {
-    if (strcmp(event, "redraw") == 0) {
+    switch (_hash(event)) {
+    case _hash("redraw"): {
         LOG_TRACE("Nvim redraw event.");
         for (size_t i = 0; i < args.size; i++) {
             auto& arg = args.ptr[i];
@@ -1063,99 +1076,147 @@ void NvimWidget::_handle_nvim_notification(const char* event,
                              operation);
                     continue;
                 }
-                _handle_nvim_redraw(operation.c_str(), op_args.via.array);
+                _handle_nvim_redraw(operation, op_args.via.array);
             }
         }
-    } else if (strcmp(event, "Gui") == 0 && args.size > 0) {
-        std::string gui_event = args.ptr[0].as<std::string>();
-        _handle_nvim_gui_event(gui_event.c_str(), args);
-    } else {
+        break;
+    }
+    case _hash("Gui"): {
+        if (args.size > 0) {
+            std::string gui_event = args.ptr[0].as<std::string>();
+            _handle_nvim_gui_event(gui_event, args);
+        }
+        break;
+    }
+    default:
         LOG_TRACE("Unhandled notification: {}", event);
+        break;
     }
 }
 
-void NvimWidget::_handle_nvim_redraw(const char* operation,
+void NvimWidget::_handle_nvim_redraw(std::string_view operation,
                                      msgpack::object_array& args) {
-    if (strcmp(operation, "resize") == 0) {
+    switch (_hash(operation)) {
+    case _hash("resize"):
         _redraw_resize(args);
-    } else if (strcmp(operation, "clear") == 0) {
+        break;
+    case _hash("clear"):
         _redraw_clear(args);
-    } else if (strcmp(operation, "cursor_goto") == 0) {
+        break;
+    case _hash("cursor_goto"):
         _redraw_cursor_goto(args);
-    } else if (strcmp(operation, "put") == 0) {
+        break;
+    case _hash("put"):
         _redraw_put(args);
-    } else if (strcmp(operation, "scroll") == 0) {
+        break;
+    case _hash("scroll"):
         _redraw_scroll(args);
-    } else if (strcmp(operation, "set_scroll_region") == 0) {
+        break;
+    case _hash("set_scroll_region"):
         _redraw_set_scroll_region(args);
-    } else if (strcmp(operation, "highlight_set") == 0) {
+        break;
+    case _hash("highlight_set"):
         _redraw_highlight_set(args);
-    } else if (strcmp(operation, "eol_clear") == 0) {
+        break;
+    case _hash("eol_clear"):
         _redraw_eol_clear(args);
-    } else if (strcmp(operation, "flush") == 0) {
+        break;
+    case _hash("flush"):
         _redraw_flush(args);
-    } else if (strcmp(operation, "option_set") == 0) {
+        break;
+    case _hash("option_set"):
         _redraw_option_set(args);
-    } else if (strcmp(operation, "set_title") == 0) {
+        break;
+    case _hash("set_title"):
         _redraw_set_title(args);
-    } else if (strcmp(operation, "default_colors_set") == 0) {
+        break;
+    case _hash("default_colors_set"):
         _redraw_default_colors_set(args);
-    } else if (strcmp(operation, "mode_info_set") == 0) {
+        break;
+    case _hash("mode_info_set"):
         _redraw_mode_info_set(args);
-    } else if (strcmp(operation, "mode_change") == 0) {
+        break;
+    case _hash("mode_change"):
         _redraw_mode_change(args);
-    } else if (strcmp(operation, "busy_start") == 0) {
+        break;
+    case _hash("busy_start"):
         _redraw_busy_start(args);
-    } else if (strcmp(operation, "busy_stop") == 0) {
+        break;
+    case _hash("busy_stop"):
         _redraw_busy_stop(args);
-    } else if (strcmp(operation, "mouse_on") == 0) {
+        break;
+    case _hash("mouse_on"):
         _redraw_mouse_on(args);
-    } else if (strcmp(operation, "mouse_off") == 0) {
+        break;
+    case _hash("mouse_off"):
         _redraw_mouse_off(args);
-    } else if (strcmp(operation, "bell") == 0) {
+        break;
+    case _hash("bell"):
         _redraw_bell(args);
-    } else if (strcmp(operation, "suspend") == 0) {
+        break;
+    case _hash("suspend"):
         _redraw_suspend(args);
-    } else if (strcmp(operation, "chdir") == 0) {
+        break;
+    case _hash("chdir"):
         _redraw_chdir(args);
-    } else if (strcmp(operation, "popupmenu_show") == 0) {
+        break;
+    case _hash("popupmenu_show"):
         _redraw_popupmenu_show(args);
-    } else if (strcmp(operation, "popupmenu_select") == 0) {
+        break;
+    case _hash("popupmenu_select"):
         _redraw_popupmenu_select(args);
-    } else if (strcmp(operation, "popupmenu_hide") == 0) {
+        break;
+    case _hash("popupmenu_hide"):
         _redraw_popupmenu_hide(args);
-    } else if (strcmp(operation, "grid_resize") == 0) {
+        break;
+    case _hash("grid_resize"):
         _redraw_grid_resize(args);
-    } else if (strcmp(operation, "grid_line") == 0) {
+        break;
+    case _hash("grid_line"):
         _redraw_grid_line(args);
-    } else if (strcmp(operation, "grid_clear") == 0) {
+        break;
+    case _hash("grid_clear"):
         _redraw_grid_clear(args);
-    } else if (strcmp(operation, "grid_cursor_goto") == 0) {
+        break;
+    case _hash("grid_cursor_goto"):
         _redraw_grid_cursor_goto(args);
-    } else if (strcmp(operation, "grid_scroll") == 0) {
+        break;
+    case _hash("grid_scroll"):
         _redraw_grid_scroll(args);
-    } else if (strcmp(operation, "grid_destroy") == 0) {
+        break;
+    case _hash("grid_destroy"):
         _redraw_grid_destroy(args);
-    } else if (strcmp(operation, "hl_attr_define") == 0) {
+        break;
+    case _hash("hl_attr_define"):
         _redraw_hl_attr_define(args);
-    } else if (strcmp(operation, "hl_group_set") == 0) {
+        break;
+    case _hash("hl_group_set"):
         _redraw_hl_group_set(args);
-    } else if (strcmp(operation, "cmdline_show") == 0) {
+        break;
+    case _hash("cmdline_show"):
         _cmdline_show(args);
-    } else if (strcmp(operation, "cmdline_hide") == 0) {
+        break;
+    case _hash("cmdline_hide"):
         _cmdline_hide(args);
-    } else if (strcmp(operation, "cmdline_pos") == 0) {
+        break;
+    case _hash("cmdline_pos"):
         _cmdline_pos(args);
-    } else if (strcmp(operation, "cmdline_special_char") == 0) {
+        break;
+    case _hash("cmdline_special_char"):
         _cmdline_special_char(args);
-    } else if (strcmp(operation, "cmdline_block_show") == 0) {
+        break;
+    case _hash("cmdline_block_show"):
         _cmdline_block_show(args);
-    } else if (strcmp(operation, "cmdline_block_append") == 0) {
+        break;
+    case _hash("cmdline_block_append"):
         _cmdline_block_append(args);
-    } else if (strcmp(operation, "cmdline_block_hide") == 0) {
+        break;
+    case _hash("cmdline_block_hide"):
         _cmdline_block_hide(args);
-    } else {
+        break;
+    default:
         LOG_TRACE("Unhandled redraw operation: {}", operation);
+        break;
     }
 }
 
@@ -2306,7 +2367,7 @@ void NvimWidget::_cmdline_block_hide(msgpack::object_array& /*args*/) {
     LOG_DEBUG("cmdline_block_hide: not yet implemented");
 }
 
-void NvimWidget::_handle_nvim_gui_event(const char* event,
+void NvimWidget::_handle_nvim_gui_event(std::string_view event,
                                         msgpack::object_array& /*args*/) {}
 
 void NvimWidget::_check_font_size_changed() {
@@ -2895,7 +2956,7 @@ void NvimWidget::_dispatch_request(msgpack::object& req) {
      */
     uint32_t msgid = req.via.array.ptr[1].as<uint32_t>();
     std::string method = req.via.array.ptr[2].as<std::string>();
-    _handle_nvim_request(msgid, method.c_str(), req.via.array.ptr[3].via.array);
+    _handle_nvim_request(msgid, method, req.via.array.ptr[3].via.array);
 }
 
 void NvimWidget::_dispatch_response(msgpack::object& resp) {
@@ -2940,7 +3001,7 @@ void NvimWidget::_dispatch_notification(msgpack::object& nt) {
      * See: `serialize_request` in 'nvim/msgpack_rpc/channel.c'
      */
     std::string event = nt.via.array.ptr[1].as<std::string>();
-    _handle_nvim_notification(event.c_str(), nt.via.array.ptr[2].via.array);
+    _handle_nvim_notification(event, nt.via.array.ptr[2].via.array);
 }
 
 void NvimWidget::_on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
