@@ -4,12 +4,23 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug",
+      "name": "(lldb) Launch imnvim",
       "program": "${command:cmake.launchTargetPath}",
       "args": [],
       "cwd": "${workspaceFolder}",
       "internalConsoleOptions": "neverOpen",
       "console": "integratedTerminal"
+    },
+    {
+      "name": "(Windows) Launch imnvim",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "console": "externalTerminal"
     }
   ]
 }

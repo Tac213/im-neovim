@@ -6,7 +6,6 @@
     "josetr.cmake-language-support-vscode"
   ],
   "unwantedRecommendations": [
-    "ms-vscode.cpptools",
     "ms-vscode.cpptools-extension-pack"
   ]
 }
