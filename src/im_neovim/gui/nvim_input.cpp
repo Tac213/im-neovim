@@ -83,6 +83,7 @@ bool is_handled_control_char(ImWchar c) {
     case '\b': // Backspace
     case 0x7F: // Delete
     case 0x1B: // Escape
+    case ' ':  // Space — handled as <Space> special key in Pass 1
         return true;
     default:
         return false;
