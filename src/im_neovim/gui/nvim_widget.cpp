@@ -244,6 +244,10 @@ void NvimWidget::render() {
             _render_message_area(draw_list, pos, char_width, line_height);
         }
 
+        if (m_cmdline_block_visible) {
+            _render_cmdline_block(draw_list, pos, char_width, line_height);
+        }
+
         if (m_cmdline_visible) {
             _render_cmdline(draw_list, pos, char_width, line_height);
         }
@@ -281,11 +285,14 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
     // When the cmdline is visible, skip the last row — it is reserved for the
     // command line (matching nvim TUI behaviour).
     // When messages are visible, skip additional rows above the cmdline.
+    // When a cmdline block is visible, skip rows for it above the messages.
     uint32_t msg_rows = _message_area_rows();
+    uint32_t block_rows = _cmdline_block_rows();
     uint32_t cmdline_rows = m_cmdline_visible ? 1 : 0;
-    uint32_t render_rows = (grid.height > cmdline_rows + msg_rows)
-                               ? grid.height - cmdline_rows - msg_rows
-                               : grid.height;
+    uint32_t render_rows =
+        (grid.height > cmdline_rows + msg_rows + block_rows)
+            ? grid.height - cmdline_rows - msg_rows - block_rows
+            : grid.height;
 
     // Draw all cells
     for (uint32_t y = 0; y < render_rows; y++) {
@@ -453,7 +460,8 @@ void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
     }
 
     // Draw prompt (if any) before the content.
-    float x = pos.x + static_cast<float>(m_cmdline_indent) * char_width;
+    // The indent applies to the content, not the prompt or firstc.
+    float x = pos.x;
     ImU32 prompt_color = ImGui::ColorConvertFloat4ToU32(m_default_fg);
     if (!m_cmdline_prompt.empty()) {
         draw_list->AddText(ImVec2(x, cmdline_y), prompt_color,
@@ -461,9 +469,7 @@ void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
         x += ImGui::CalcTextSize(m_cmdline_prompt.c_str()).x;
     }
 
-    // Draw the firstc character. When ext_cmdline is enabled, Neovim may
-    // or may not include firstc in the content chunks; rendering it
-    // explicitly here ensures it always appears.
+    // Draw firstc (e.g. ':'). Neovim sends it separately from content.
     if (!m_cmdline_firstc.empty()) {
         ImU32 firstc_color = ImGui::ColorConvertFloat4ToU32(m_default_fg);
         draw_list->AddText(ImVec2(x, cmdline_y), firstc_color,
@@ -471,9 +477,11 @@ void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
         x += ImGui::CalcTextSize(m_cmdline_firstc.c_str()).x;
     }
 
+    // Apply cmdline indent to content.
+    x += static_cast<float>(m_cmdline_indent) * char_width;
+
     // Draw each content chunk with its highlight attribute.
-    for (size_t ci = 0; ci < m_cmdline_content.size(); ci++) {
-        auto chunk = m_cmdline_content[ci];
+    for (const auto& chunk : m_cmdline_content) {
         ImVec4 fg = m_default_fg;
         ImVec4 bg = m_default_bg;
 
@@ -483,15 +491,6 @@ void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
                 fg = hl_it->second.fg;
                 bg = hl_it->second.bg;
             }
-        }
-
-        // If the first chunk starts with the firstc character, strip it
-        // to avoid double-rendering.
-        if (ci == 0 && !m_cmdline_firstc.empty() &&
-            chunk.text.size() >= m_cmdline_firstc.size() &&
-            chunk.text.compare(0, m_cmdline_firstc.size(), m_cmdline_firstc) ==
-                0) {
-            chunk.text = chunk.text.substr(m_cmdline_firstc.size());
         }
 
         if (chunk.text.empty()) {
@@ -592,15 +591,6 @@ void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
             if (!found) {
                 for (size_t ci = 0; ci < m_cmdline_content.size(); ci++) {
                     std::string chunk_text = m_cmdline_content[ci].text;
-
-                    // Strip firstc from the first chunk (mirroring the
-                    // rendering loop above).
-                    if (ci == 0 && !m_cmdline_firstc.empty() &&
-                        chunk_text.size() >= m_cmdline_firstc.size() &&
-                        chunk_text.compare(0, m_cmdline_firstc.size(),
-                                           m_cmdline_firstc) == 0) {
-                        chunk_text = chunk_text.substr(m_cmdline_firstc.size());
-                    }
 
                     int chunk_len = static_cast<int>(chunk_text.length());
                     int remaining = target_chars - chars_walked;
@@ -2388,16 +2378,97 @@ void NvimWidget::_cmdline_special_char(msgpack::object_array& args) {
     // level in args.ptr[2] — ignored for now
 }
 
-void NvimWidget::_cmdline_block_show(msgpack::object_array& /*args*/) {
-    LOG_DEBUG("cmdline_block_show: not yet implemented");
+void NvimWidget::_cmdline_block_show(msgpack::object_array& args) {
+    m_cmdline_block_lines.clear();
+
+    if (args.size < 1 || args.ptr[0].type != msgpack::type::ARRAY) {
+        LOG_WARN("cmdline_block_show: expected 1 array argument");
+        return;
+    }
+
+    msgpack::object_array& lines = args.ptr[0].via.array;
+    m_cmdline_block_lines.reserve(lines.size);
+
+    for (size_t li = 0; li < lines.size; li++) {
+        if (lines.ptr[li].type != msgpack::type::ARRAY) {
+            continue;
+        }
+        msgpack::object_array& chunks = lines.ptr[li].via.array;
+        std::vector<CmdlineChunk> line_chunks;
+        line_chunks.reserve(chunks.size);
+
+        for (size_t ci = 0; ci < chunks.size; ci++) {
+            if (chunks.ptr[ci].type != msgpack::type::ARRAY ||
+                chunks.ptr[ci].via.array.size < 3) {
+                continue;
+            }
+            msgpack::object_array& chunk = chunks.ptr[ci].via.array;
+            CmdlineChunk c;
+            if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+                c.hl_id = static_cast<int>(chunk.ptr[0].as<uint32_t>());
+            } else if (chunk.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.hl_id = chunk.ptr[0].as<int32_t>();
+            }
+            if (chunk.ptr[1].type == msgpack::type::STR) {
+                c.text = chunk.ptr[1].as<std::string>();
+            }
+            if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+                c.raw_hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+            } else if (chunk.ptr[2].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.raw_hl_id = chunk.ptr[2].as<int32_t>();
+            }
+            line_chunks.push_back(std::move(c));
+        }
+
+        m_cmdline_block_lines.push_back(std::move(line_chunks));
+    }
+
+    m_cmdline_block_visible = !m_cmdline_block_lines.empty();
+    LOG_TRACE("cmdline_block_show: {} lines", m_cmdline_block_lines.size());
 }
 
-void NvimWidget::_cmdline_block_append(msgpack::object_array& /*args*/) {
-    LOG_DEBUG("cmdline_block_append: not yet implemented");
+void NvimWidget::_cmdline_block_append(msgpack::object_array& args) {
+    if (args.size < 1 || args.ptr[0].type != msgpack::type::ARRAY) {
+        LOG_WARN("cmdline_block_append: expected 1 array argument");
+        return;
+    }
+
+    msgpack::object_array& chunks = args.ptr[0].via.array;
+    std::vector<CmdlineChunk> line_chunks;
+    line_chunks.reserve(chunks.size);
+
+    for (size_t ci = 0; ci < chunks.size; ci++) {
+        if (chunks.ptr[ci].type != msgpack::type::ARRAY ||
+            chunks.ptr[ci].via.array.size < 3) {
+            continue;
+        }
+        msgpack::object_array& chunk = chunks.ptr[ci].via.array;
+        CmdlineChunk c;
+        if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+            c.hl_id = static_cast<int>(chunk.ptr[0].as<uint32_t>());
+        } else if (chunk.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+            c.hl_id = chunk.ptr[0].as<int32_t>();
+        }
+        if (chunk.ptr[1].type == msgpack::type::STR) {
+            c.text = chunk.ptr[1].as<std::string>();
+        }
+        if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+            c.raw_hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+        } else if (chunk.ptr[2].type == msgpack::type::NEGATIVE_INTEGER) {
+            c.raw_hl_id = chunk.ptr[2].as<int32_t>();
+        }
+        line_chunks.push_back(std::move(c));
+    }
+
+    m_cmdline_block_lines.push_back(std::move(line_chunks));
+    LOG_TRACE("cmdline_block_append: line appended (total {} lines)",
+              m_cmdline_block_lines.size());
 }
 
 void NvimWidget::_cmdline_block_hide(msgpack::object_array& /*args*/) {
-    LOG_DEBUG("cmdline_block_hide: not yet implemented");
+    m_cmdline_block_lines.clear();
+    m_cmdline_block_visible = false;
+    LOG_TRACE("cmdline_block_hide");
 }
 
 // =========================================================================
@@ -2716,14 +2787,15 @@ void NvimWidget::_render_message_area(ImDrawList* draw_list, const ImVec2& pos,
     float effective_line_height = line_height + static_cast<float>(m_linespace);
 
     uint32_t cmdline_rows = m_cmdline_visible ? 1u : 0u;
+    uint32_t block_rows = _cmdline_block_rows();
     uint32_t msg_rows = _message_area_rows();
     if (msg_rows == 0) {
         return;
     }
 
-    // The message area starts above the cmdline
-    float msg_y =
-        pos.y + (grid.height - cmdline_rows - msg_rows) * effective_line_height;
+    // The message area starts above the cmdline block (if any) and cmdline.
+    float msg_y = pos.y + (grid.height - cmdline_rows - block_rows - msg_rows) *
+                              effective_line_height;
 
     // Render background for the entire message area
     ImVec2 msg_area_min(pos.x, msg_y);
@@ -2920,6 +2992,111 @@ void NvimWidget::_render_message_area(ImDrawList* draw_list, const ImVec2& pos,
             draw_list->AddText(ImVec2(ruler_x, msg_row_y), text_color,
                                chunk.text.c_str());
             ruler_x += ImGui::CalcTextSize(chunk.text.c_str()).x;
+        }
+    }
+}
+
+// =========================================================================
+// Cmdline block rendering (ext_cmdline multi-line input)
+// =========================================================================
+
+uint32_t NvimWidget::_cmdline_block_rows() const {
+    if (!m_cmdline_block_visible) {
+        return 0;
+    }
+    return static_cast<uint32_t>(m_cmdline_block_lines.size());
+}
+
+void NvimWidget::_render_cmdline_block(ImDrawList* draw_list, const ImVec2& pos,
+                                       float char_width, float line_height) {
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    Grid& grid = it->second;
+    float effective_line_height = line_height + static_cast<float>(m_linespace);
+
+    uint32_t cmdline_rows = m_cmdline_visible ? 1u : 0u;
+    uint32_t msg_rows = _message_area_rows();
+    uint32_t block_rows = _cmdline_block_rows();
+    if (block_rows == 0) {
+        return;
+    }
+
+    // The block sits above the cmdline, below the message area.
+    float block_y = pos.y + (grid.height - cmdline_rows - block_rows) *
+                                effective_line_height;
+
+    // Background fill
+    ImVec2 block_min(pos.x, block_y);
+    ImVec2 block_max(pos.x + grid.width * char_width,
+                     block_y + block_rows * effective_line_height);
+    ImVec4 block_bg = ImVec4(m_default_bg.x * 1.10f, m_default_bg.y * 1.10f,
+                             m_default_bg.z * 1.10f, 1.0f);
+    draw_list->AddRectFilled(block_min, block_max,
+                             ImGui::ColorConvertFloat4ToU32(block_bg));
+
+    // Separator line above the block
+    ImU32 sep_color =
+        ImGui::ColorConvertFloat4ToU32(ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+    draw_list->AddLine(ImVec2(block_min.x, block_min.y),
+                       ImVec2(block_max.x, block_min.y), sep_color);
+
+    // Render each line
+    for (size_t li = 0; li < m_cmdline_block_lines.size(); li++) {
+        float row_y = block_y + li * effective_line_height;
+        float x = pos.x;
+        const auto& line_chunks = m_cmdline_block_lines[li];
+
+        // Draw background for the full row before rendering chunks
+        // (ensure no gaps between chunks).
+        ImVec2 row_bg_min(pos.x, row_y);
+        ImVec2 row_bg_max(pos.x + grid.width * char_width, row_y + line_height);
+        draw_list->AddRectFilled(row_bg_min, row_bg_max,
+                                 ImGui::ColorConvertFloat4ToU32(block_bg));
+
+        // Draw the prompt character (e.g. ':') at the start of each line.
+        // Neovim omits the firstc from cmdline_block text; we restore it
+        // using the firstc from the active cmdline (which is ':'
+        // during Ex-mode continuation).
+        std::string firstc = m_cmdline_firstc;
+        if (firstc.empty()) {
+            firstc = ":"; // fallback for Ex-mode blocks
+        }
+        if (!firstc.empty()) {
+            ImU32 prompt_color = ImGui::ColorConvertFloat4ToU32(m_default_fg);
+            draw_list->AddText(ImVec2(x, row_y), prompt_color, firstc.c_str());
+            x += ImGui::CalcTextSize(firstc.c_str()).x;
+        }
+
+        for (const auto& chunk : line_chunks) {
+            if (chunk.text.empty()) {
+                continue;
+            }
+
+            // Neovim sends firstc separately from content; no strip needed.
+
+            ImVec4 fg = m_default_fg;
+            ImVec4 bg = block_bg;
+            if (chunk.hl_id != 0) {
+                auto hl_it = m_hl_attrs.find(chunk.hl_id);
+                if (hl_it != m_hl_attrs.end()) {
+                    fg = hl_it->second.fg;
+                    bg = hl_it->second.bg;
+                }
+            }
+
+            float chunk_width = ImGui::CalcTextSize(chunk.text.c_str()).x;
+            ImVec2 bg_min(x, row_y);
+            ImVec2 bg_max(x + chunk_width, row_y + line_height);
+            draw_list->AddRectFilled(bg_min, bg_max,
+                                     ImGui::ColorConvertFloat4ToU32(bg));
+
+            ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
+            draw_list->AddText(ImVec2(x, row_y), text_color,
+                               chunk.text.c_str());
+            x += chunk_width;
         }
     }
 }

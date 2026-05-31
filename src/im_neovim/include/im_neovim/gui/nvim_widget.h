@@ -175,6 +175,11 @@ class NvimWidget : public TextWidget,
     // Returns the number of rows currently occupied by the message area.
     uint32_t _message_area_rows() const;
 
+    /* Cmdline block rendering (ext_cmdline) */
+    void _render_cmdline_block(ImDrawList* draw_list, const ImVec2& pos,
+                               float char_width, float line_height);
+    uint32_t _cmdline_block_rows() const;
+
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
     static void _on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
@@ -360,6 +365,10 @@ class NvimWidget : public TextWidget,
     std::string m_cmdline_prompt;
     std::string m_cmdline_special_char;
     bool m_cmdline_special_shift{false};
+
+    // Cmdline block state (ext_cmdline multi-line input)
+    bool m_cmdline_block_visible{false};
+    std::vector<std::vector<CmdlineChunk>> m_cmdline_block_lines;
 
     // Message area state (ext_messages)
     bool m_msg_visible{false};
