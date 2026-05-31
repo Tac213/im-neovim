@@ -228,6 +228,10 @@ void NvimWidget::render() {
 
         _render_grid(draw_list, pos, char_width, line_height);
 
+        if (m_cmdline_visible) {
+            _render_cmdline(draw_list, pos, char_width, line_height);
+        }
+
         if (m_popup_visible && !m_popup_items.empty()) {
             _render_popup_menu(draw_list, pos, char_width, line_height);
         }
@@ -258,8 +262,12 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
 
     float effective_line_height = line_height + static_cast<float>(m_linespace);
 
+    // When the cmdline is visible, skip the last row — it is reserved for the
+    // command line (matching nvim TUI behaviour).
+    uint32_t render_rows = m_cmdline_visible ? grid.height - 1 : grid.height;
+
     // Draw all cells
-    for (uint32_t y = 0; y < grid.height; y++) {
+    for (uint32_t y = 0; y < render_rows; y++) {
         bool skip_next = false;
         for (uint32_t x = 0; x < grid.width; x++) {
             // Skip the filler cell after a double-width character
@@ -368,8 +376,9 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
         }
     }
 
-    // Mode indicator overlay
-    if (!m_current_mode_name.empty()) {
+    // Mode indicator overlay — only when cmdline is NOT visible (the cmdline
+    // bar at the bottom serves as the mode indicator itself).
+    if (!m_current_mode_name.empty() && !m_cmdline_visible) {
         std::string mode_text = "-- " + m_current_mode_name + " --";
         // Capitalize first letter
         if (!mode_text.empty() && mode_text[3] >= 'a' && mode_text[3] <= 'z') {
@@ -398,6 +407,268 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
                                          ImVec4(1.0f, 1.0f, 1.0f, alpha)));
         } else {
             m_bell_pending = false;
+        }
+    }
+}
+
+void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
+                                 float char_width, float line_height) {
+    auto it = m_grids.find(m_current_grid);
+    if (it == m_grids.end()) {
+        return;
+    }
+
+    Grid& grid = it->second;
+    float effective_line_height = line_height + static_cast<float>(m_linespace);
+
+    // The cmdline occupies the last row of the widget.
+    float cmdline_y = pos.y + (grid.height - 1) * effective_line_height;
+
+    // Build the full display text and apply highlighting chunks.
+    std::string full_text;
+    for (const auto& chunk : m_cmdline_content) {
+        full_text += chunk.text;
+    }
+
+    // Draw prompt (if any) before the content.
+    float x = pos.x + static_cast<float>(m_cmdline_indent) * char_width;
+    ImU32 prompt_color = ImGui::ColorConvertFloat4ToU32(m_default_fg);
+    if (!m_cmdline_prompt.empty()) {
+        draw_list->AddText(ImVec2(x, cmdline_y), prompt_color,
+                           m_cmdline_prompt.c_str());
+        x += ImGui::CalcTextSize(m_cmdline_prompt.c_str()).x;
+    }
+
+    // Draw the firstc character. When ext_cmdline is enabled, Neovim may
+    // or may not include firstc in the content chunks; rendering it
+    // explicitly here ensures it always appears.
+    if (!m_cmdline_firstc.empty()) {
+        ImU32 firstc_color = ImGui::ColorConvertFloat4ToU32(m_default_fg);
+        draw_list->AddText(ImVec2(x, cmdline_y), firstc_color,
+                           m_cmdline_firstc.c_str());
+        x += ImGui::CalcTextSize(m_cmdline_firstc.c_str()).x;
+    }
+
+    // Draw each content chunk with its highlight attribute.
+    for (size_t ci = 0; ci < m_cmdline_content.size(); ci++) {
+        auto chunk = m_cmdline_content[ci];
+        ImVec4 fg = m_default_fg;
+        ImVec4 bg = m_default_bg;
+
+        if (chunk.hl_id != 0) {
+            auto hl_it = m_hl_attrs.find(chunk.hl_id);
+            if (hl_it != m_hl_attrs.end()) {
+                fg = hl_it->second.fg;
+                bg = hl_it->second.bg;
+            }
+        }
+
+        // If the first chunk starts with the firstc character, strip it
+        // to avoid double-rendering.
+        if (ci == 0 && !m_cmdline_firstc.empty() &&
+            chunk.text.size() >= m_cmdline_firstc.size() &&
+            chunk.text.compare(0, m_cmdline_firstc.size(), m_cmdline_firstc) ==
+                0) {
+            chunk.text = chunk.text.substr(m_cmdline_firstc.size());
+        }
+
+        if (chunk.text.empty()) {
+            continue;
+        }
+
+        // Draw background for this chunk (fills the line height).
+        float chunk_width = ImGui::CalcTextSize(chunk.text.c_str()).x;
+        ImVec2 bg_min(x, cmdline_y);
+        ImVec2 bg_max(x + chunk_width, cmdline_y + line_height);
+        draw_list->AddRectFilled(bg_min, bg_max,
+                                 ImGui::ColorConvertFloat4ToU32(bg));
+
+        ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
+        draw_list->AddText(ImVec2(x, cmdline_y), text_color,
+                           chunk.text.c_str());
+        x += chunk_width;
+    }
+
+    // Draw special character indicator if present (e.g. after CTRL-V).
+    if (!m_cmdline_special_char.empty()) {
+        ImU32 special_color =
+            ImGui::ColorConvertFloat4ToU32(ImVec4(0.9f, 0.9f, 0.3f, 1.0f));
+        std::string indicator = "^" + m_cmdline_special_char;
+        draw_list->AddText(ImVec2(x, cmdline_y), special_color,
+                           indicator.c_str());
+        x += ImGui::CalcTextSize(indicator.c_str()).x;
+    }
+
+    // Draw cursor when the window is focused.
+    if (ImGui::IsWindowFocused() && m_nvim_attached) {
+        // Blink timing (shared with main grid cursor).
+        bool show_cursor = true;
+        if (m_cursor_blinkon > 0 || m_cursor_blinkoff > 0) {
+            double now = ImGui::GetTime();
+            double elapsed_ms = (now - m_last_blink_time) * 1000.0;
+
+            if (elapsed_ms < static_cast<double>(m_cursor_blinkwait)) {
+                show_cursor = true;
+            } else {
+                double blink_elapsed =
+                    elapsed_ms - static_cast<double>(m_cursor_blinkwait);
+                uint32_t cycle =
+                    static_cast<uint32_t>(m_cursor_blinkon + m_cursor_blinkoff);
+                if (cycle == 0) {
+                    show_cursor = true;
+                } else {
+                    double cycle_pos =
+                        fmod(blink_elapsed, static_cast<double>(cycle));
+                    show_cursor =
+                        cycle_pos < static_cast<double>(m_cursor_blinkon);
+                }
+            }
+        }
+
+        if (show_cursor) {
+            // Cursor position is anchored at indent + prompt + firstc.
+            float cursor_base_x =
+                pos.x + static_cast<float>(m_cmdline_indent) * char_width;
+            if (!m_cmdline_prompt.empty()) {
+                cursor_base_x +=
+                    ImGui::CalcTextSize(m_cmdline_prompt.c_str()).x;
+            }
+
+            // firstc is rendered before content chunks — include its
+            // width in the cursor base so that m_cmdline_pos=1 lands
+            // right after the firstc.
+            float firstc_width = 0.0f;
+            if (!m_cmdline_firstc.empty()) {
+                firstc_width = ImGui::CalcTextSize(m_cmdline_firstc.c_str()).x;
+            }
+
+            // m_cmdline_pos is a 0-based index into cmdbuff: the
+            // character the cursor sits on.  Position the cursor AFTER
+            // that character, i.e. after (m_cmdline_pos + 1) characters
+            // from the start.
+            // We render firstc separately, then content chunks (with
+            // the firstc stripped from the first chunk).  Walk the
+            // rendered pieces and stop after target_chars characters.
+            int target_chars = m_cmdline_pos + 1;
+            float cursor_x = cursor_base_x;
+            int chars_walked = 0;
+            bool found = false;
+            ImVec4 cursor_text_fg = m_default_fg; // fg to use for cursor char
+
+            // firstc
+            if (!m_cmdline_firstc.empty() && chars_walked < target_chars) {
+                chars_walked++;
+                if (chars_walked == target_chars) {
+                    cursor_x += firstc_width;
+                    found = true;
+                } else {
+                    cursor_x += firstc_width;
+                }
+            }
+
+            // content chunks
+            if (!found) {
+                for (size_t ci = 0; ci < m_cmdline_content.size(); ci++) {
+                    std::string chunk_text = m_cmdline_content[ci].text;
+
+                    // Strip firstc from the first chunk (mirroring the
+                    // rendering loop above).
+                    if (ci == 0 && !m_cmdline_firstc.empty() &&
+                        chunk_text.size() >= m_cmdline_firstc.size() &&
+                        chunk_text.compare(0, m_cmdline_firstc.size(),
+                                           m_cmdline_firstc) == 0) {
+                        chunk_text = chunk_text.substr(m_cmdline_firstc.size());
+                    }
+
+                    int chunk_len = static_cast<int>(chunk_text.length());
+                    int remaining = target_chars - chars_walked;
+                    if (remaining <= chunk_len) {
+                        std::string prefix = chunk_text.substr(0, remaining);
+                        cursor_x += ImGui::CalcTextSize(prefix.c_str()).x;
+
+                        // Record the chunk's foreground for cursor-char
+                        // rendering.
+                        if (remaining > 0 && ci < m_cmdline_content.size() &&
+                            m_cmdline_content[ci].hl_id != 0) {
+                            auto hl_it =
+                                m_hl_attrs.find(m_cmdline_content[ci].hl_id);
+                            if (hl_it != m_hl_attrs.end()) {
+                                cursor_text_fg = hl_it->second.fg;
+                            }
+                        }
+                        found = true;
+                        break;
+                    }
+                    cursor_x += ImGui::CalcTextSize(chunk_text.c_str()).x;
+                    chars_walked += chunk_len;
+                }
+            }
+
+            // If target_chars is past all rendered characters, cursor
+            // rests at the end (cursor_x already points there).
+            if (!found) {
+                // Cursor at end of all text; no highlight lookup needed.
+            }
+
+            ImVec2 cursor_min(cursor_x, cmdline_y);
+            ImVec2 cursor_max(cursor_x + char_width, cmdline_y + line_height);
+
+            float pct = static_cast<float>(m_cursor_cell_percentage) / 100.0f;
+            switch (m_cursor_shape) {
+            case CursorShape::Horizontal:
+                cursor_min.y = cmdline_y + line_height * (1.0f - pct);
+                break;
+            case CursorShape::Vertical:
+                cursor_max.x = cursor_x + char_width * pct;
+                break;
+            case CursorShape::Block:
+                // Full cell, no adjustment needed.
+                break;
+            }
+
+            ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
+                                m_dark_mode ? 0.7f : 0.3f,
+                                m_dark_mode ? 0.7f : 0.3f, 0.8f};
+            if (m_busy) {
+                cursor_color.w = 0.4f;
+            }
+
+            draw_list->AddRectFilled(
+                cursor_min, cursor_max,
+                ImGui::ColorConvertFloat4ToU32(cursor_color));
+
+            // Cursor-on-character: only when the cursor is positioned
+            // ON a character (mid-string), not past the end.  Since we
+            // currently position the cursor after the m_cmdline_pos-th
+            // character, there is no character to render for end-of-line
+            // typing.  TODO: adjust for mid-string cursor navigation.
+            if (m_cmdline_pos >= 0 &&
+                static_cast<size_t>(m_cmdline_pos) + 1 < full_text.length()) {
+                int char_index = m_cmdline_pos;
+                const char* ptr = full_text.c_str();
+                const char* end = ptr + full_text.length();
+                int char_idx = 0;
+                uint32_t rune = 0;
+                size_t clen = 0;
+                while (ptr < end && char_idx <= char_index) {
+                    clen = TextWidget::utf8_decode(ptr, &rune, end - ptr);
+                    if (clen == 0) {
+                        break;
+                    }
+                    if (char_idx == char_index) {
+                        break;
+                    }
+                    ptr += clen;
+                    char_idx++;
+                }
+                if (char_idx == char_index && clen > 0) {
+                    char text[TextWidget::g_utf_size] = {0};
+                    TextWidget::utf8_encode(rune, text);
+                    draw_list->AddText(
+                        cursor_min,
+                        ImGui::ColorConvertFloat4ToU32(cursor_text_fg), text);
+                }
+            }
         }
     }
 }
@@ -721,7 +992,7 @@ void NvimWidget::_initialize() {
         nullptr);
     req->arg_uint32(m_state.col);
     req->arg_uint32(m_state.row);
-    req->arg_map(2);
+    req->arg_map(4);
     {
         std::string rgb_key{"rgb"};
         req->arg_str(rgb_key.size());
@@ -731,6 +1002,16 @@ void NvimWidget::_initialize() {
         std::string multigrid_key{"ext_multigrid"};
         req->arg_str(multigrid_key.size());
         req->arg_str_body(multigrid_key.c_str(), multigrid_key.size());
+        req->arg_true();
+
+        std::string cmdline_key{"ext_cmdline"};
+        req->arg_str(cmdline_key.size());
+        req->arg_str_body(cmdline_key.c_str(), cmdline_key.size());
+        req->arg_true();
+
+        std::string popupmenu_key{"ext_popupmenu"};
+        req->arg_str(popupmenu_key.size());
+        req->arg_str_body(popupmenu_key.c_str(), popupmenu_key.size());
         req->arg_true();
     }
     m_multigrid_enabled = true;
@@ -788,6 +1069,8 @@ void NvimWidget::_handle_nvim_notification(const char* event,
     } else if (strcmp(event, "Gui") == 0 && args.size > 0) {
         std::string gui_event = args.ptr[0].as<std::string>();
         _handle_nvim_gui_event(gui_event.c_str(), args);
+    } else {
+        LOG_TRACE("Unhandled notification: {}", event);
     }
 }
 
@@ -857,8 +1140,22 @@ void NvimWidget::_handle_nvim_redraw(const char* operation,
         _redraw_hl_attr_define(args);
     } else if (strcmp(operation, "hl_group_set") == 0) {
         _redraw_hl_group_set(args);
+    } else if (strcmp(operation, "cmdline_show") == 0) {
+        _cmdline_show(args);
+    } else if (strcmp(operation, "cmdline_hide") == 0) {
+        _cmdline_hide(args);
+    } else if (strcmp(operation, "cmdline_pos") == 0) {
+        _cmdline_pos(args);
+    } else if (strcmp(operation, "cmdline_special_char") == 0) {
+        _cmdline_special_char(args);
+    } else if (strcmp(operation, "cmdline_block_show") == 0) {
+        _cmdline_block_show(args);
+    } else if (strcmp(operation, "cmdline_block_append") == 0) {
+        _cmdline_block_append(args);
+    } else if (strcmp(operation, "cmdline_block_hide") == 0) {
+        _cmdline_block_hide(args);
     } else {
-        // LOG_DEBUG("Unhandled redraw operation: {}", operation);
+        LOG_TRACE("Unhandled redraw operation: {}", operation);
     }
 }
 
@@ -1861,6 +2158,154 @@ void NvimWidget::_redraw_hl_group_set(msgpack::object_array& args) {
     m_hl_group_map[group_name] = hl_id;
 }
 
+// --- Cmdline event handlers (ext_cmdline) ---
+
+void NvimWidget::_cmdline_show(msgpack::object_array& args) {
+    if (args.size < 7) {
+        LOG_WARN("cmdline_show: expected 7 arguments, got {}", args.size);
+        return;
+    }
+
+    // Parse content: Array of [hl_id, text, raw_hl_id]
+    m_cmdline_content.clear();
+    if (args.ptr[0].type == msgpack::type::ARRAY) {
+        msgpack::object_array& content_arr = args.ptr[0].via.array;
+        m_cmdline_content.reserve(content_arr.size);
+        for (size_t i = 0; i < content_arr.size; i++) {
+            if (content_arr.ptr[i].type != msgpack::type::ARRAY ||
+                content_arr.ptr[i].via.array.size < 3) {
+                continue;
+            }
+            msgpack::object_array& chunk = content_arr.ptr[i].via.array;
+            CmdlineChunk c;
+            if (chunk.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+                c.hl_id = static_cast<int>(chunk.ptr[0].as<uint32_t>());
+            } else if (chunk.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.hl_id = chunk.ptr[0].as<int32_t>();
+            }
+            if (chunk.ptr[1].type == msgpack::type::STR) {
+                c.text = chunk.ptr[1].as<std::string>();
+            }
+            if (chunk.ptr[2].type == msgpack::type::POSITIVE_INTEGER) {
+                c.raw_hl_id = static_cast<int>(chunk.ptr[2].as<uint32_t>());
+            } else if (chunk.ptr[2].type == msgpack::type::NEGATIVE_INTEGER) {
+                c.raw_hl_id = chunk.ptr[2].as<int32_t>();
+            }
+            m_cmdline_content.push_back(std::move(c));
+        }
+    }
+
+    // pos
+    if (args.ptr[1].type == msgpack::type::POSITIVE_INTEGER) {
+        m_cmdline_pos = static_cast<int>(args.ptr[1].as<uint32_t>());
+    } else if (args.ptr[1].type == msgpack::type::NEGATIVE_INTEGER) {
+        m_cmdline_pos = args.ptr[1].as<int32_t>();
+    }
+
+    // firstc
+    if (args.ptr[2].type == msgpack::type::STR) {
+        m_cmdline_firstc = args.ptr[2].as<std::string>();
+    }
+
+    // prompt
+    if (args.ptr[3].type == msgpack::type::STR) {
+        m_cmdline_prompt = args.ptr[3].as<std::string>();
+    }
+
+    // indent
+    if (args.ptr[4].type == msgpack::type::POSITIVE_INTEGER) {
+        m_cmdline_indent = static_cast<int>(args.ptr[4].as<uint32_t>());
+    }
+
+    // level
+    if (args.ptr[5].type == msgpack::type::POSITIVE_INTEGER) {
+        m_cmdline_level = static_cast<int>(args.ptr[5].as<uint32_t>());
+    }
+
+    // hl_id (prompt highlight, unused for now)
+    // args.ptr[6] ignored
+
+    m_cmdline_visible = true;
+    LOG_TRACE("cmdline_show: level={}, pos={}, chunks={}, firstc='{}', "
+              "prompt='{}', indent={}",
+              m_cmdline_level, m_cmdline_pos, m_cmdline_content.size(),
+              m_cmdline_firstc, m_cmdline_prompt, m_cmdline_indent);
+}
+
+void NvimWidget::_cmdline_hide(msgpack::object_array& args) {
+    int level = 0;
+    if (args.size >= 1) {
+        if (args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+            level = static_cast<int>(args.ptr[0].as<uint32_t>());
+        } else if (args.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+            level = args.ptr[0].as<int32_t>();
+        }
+    }
+
+    if (level == m_cmdline_level) {
+        m_cmdline_visible = false;
+        m_cmdline_content.clear();
+        m_cmdline_pos = 0;
+        m_cmdline_firstc.clear();
+        m_cmdline_prompt.clear();
+        m_cmdline_special_char.clear();
+        LOG_TRACE("cmdline_hide: level={}", level);
+    }
+}
+
+void NvimWidget::_cmdline_pos(msgpack::object_array& args) {
+    if (args.size < 2) {
+        LOG_WARN("cmdline_pos: expected 2 arguments, got {}", args.size);
+        return;
+    }
+
+    int pos = 0;
+    if (args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        pos = static_cast<int>(args.ptr[0].as<uint32_t>());
+    } else if (args.ptr[0].type == msgpack::type::NEGATIVE_INTEGER) {
+        pos = args.ptr[0].as<int32_t>();
+    }
+
+    int level = 0;
+    if (args.ptr[1].type == msgpack::type::POSITIVE_INTEGER) {
+        level = static_cast<int>(args.ptr[1].as<uint32_t>());
+    } else if (args.ptr[1].type == msgpack::type::NEGATIVE_INTEGER) {
+        level = args.ptr[1].as<int32_t>();
+    }
+
+    if (level == m_cmdline_level) {
+        m_cmdline_pos = pos;
+    }
+}
+
+void NvimWidget::_cmdline_special_char(msgpack::object_array& args) {
+    if (args.size < 3) {
+        LOG_WARN("cmdline_special_char: expected 3 arguments, got {}",
+                 args.size);
+        return;
+    }
+
+    if (args.ptr[0].type == msgpack::type::STR) {
+        m_cmdline_special_char = args.ptr[0].as<std::string>();
+    }
+    if (args.ptr[1].type == msgpack::type::BOOLEAN) {
+        m_cmdline_special_shift = args.ptr[1].as<bool>();
+    }
+    // level in args.ptr[2] — ignored for now
+}
+
+void NvimWidget::_cmdline_block_show(msgpack::object_array& /*args*/) {
+    LOG_DEBUG("cmdline_block_show: not yet implemented");
+}
+
+void NvimWidget::_cmdline_block_append(msgpack::object_array& /*args*/) {
+    LOG_DEBUG("cmdline_block_append: not yet implemented");
+}
+
+void NvimWidget::_cmdline_block_hide(msgpack::object_array& /*args*/) {
+    LOG_DEBUG("cmdline_block_hide: not yet implemented");
+}
+
 void NvimWidget::_handle_nvim_gui_event(const char* event,
                                         msgpack::object_array& /*args*/) {}
 
@@ -2138,8 +2583,23 @@ void NvimWidget::_update_ime_position() {
     float eff_line_h = line_height + static_cast<float>(m_linespace);
     ImVec2 grid_pos = ImGui::GetCursorScreenPos();
 
-    ImVec2 cursor_screen_pos(grid_pos.x + m_state.cursor_x * char_width,
-                             grid_pos.y + (m_state.cursor_y + 1) * eff_line_h);
+    ImVec2 cursor_screen_pos;
+    if (m_cmdline_visible) {
+        // Place IME at the cmdline cursor position (bottom row)
+        auto it = m_grids.find(m_current_grid);
+        float cmdline_y =
+            grid_pos.y +
+            (static_cast<float>(it != m_grids.end() ? it->second.height
+                                                    : m_state.row) -
+             1.0f) *
+                eff_line_h;
+        cursor_screen_pos = ImVec2(grid_pos.x + m_cmdline_pos * char_width,
+                                   cmdline_y + eff_line_h);
+    } else {
+        cursor_screen_pos =
+            ImVec2(grid_pos.x + m_state.cursor_x * char_width,
+                   grid_pos.y + (m_state.cursor_y + 1) * eff_line_h);
+    }
 
     ImGuiContext& g = *GImGui;
     g.PlatformImeData.InputPos = cursor_screen_pos;

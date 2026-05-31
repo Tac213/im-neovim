@@ -98,6 +98,8 @@ class NvimWidget : public TextWidget,
     void _notify_nvim_resize(uint32_t cols, uint32_t rows);
     void _render_grid(ImDrawList* draw_list, const ImVec2& pos,
                       float char_width, float line_height);
+    void _render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
+                         float char_width, float line_height);
 
     /* Buffer modified / save dialog */
     void _query_buffer_modified();
@@ -149,6 +151,15 @@ class NvimWidget : public TextWidget,
     void _redraw_grid_destroy(msgpack::object_array& args);
     void _redraw_hl_attr_define(msgpack::object_array& args);
     void _redraw_hl_group_set(msgpack::object_array& args);
+
+    /* Cmdline event handlers */
+    void _cmdline_show(msgpack::object_array& args);
+    void _cmdline_hide(msgpack::object_array& args);
+    void _cmdline_pos(msgpack::object_array& args);
+    void _cmdline_special_char(msgpack::object_array& args);
+    void _cmdline_block_show(msgpack::object_array& args);
+    void _cmdline_block_append(msgpack::object_array& args);
+    void _cmdline_block_hide(msgpack::object_array& args);
 
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
@@ -237,6 +248,13 @@ class NvimWidget : public TextWidget,
         std::string info;
     };
 
+    // Cmdline content chunk: [hl_id, text, raw_hl_id]
+    struct CmdlineChunk {
+        int hl_id{0};
+        std::string text;
+        int raw_hl_id{0};
+    };
+
     // Grid and highlight state
     std::unordered_map<uint32_t, Grid> m_grids;
     uint32_t m_current_grid{1};
@@ -303,6 +321,17 @@ class NvimWidget : public TextWidget,
     int32_t m_popup_anchor_row{0};
     int32_t m_popup_anchor_col{0};
     bool m_popup_visible{false};
+
+    // Cmdline state (ext_cmdline)
+    bool m_cmdline_visible{false};
+    std::vector<CmdlineChunk> m_cmdline_content;
+    int m_cmdline_pos{0};
+    int m_cmdline_level{0};
+    int m_cmdline_indent{0};
+    std::string m_cmdline_firstc;
+    std::string m_cmdline_prompt;
+    std::string m_cmdline_special_char;
+    bool m_cmdline_special_shift{false};
 
     // Multigrid protocol state
     bool m_multigrid_enabled{false};
