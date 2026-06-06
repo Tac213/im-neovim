@@ -5,7 +5,7 @@
 #include <vector>
 #include <winuser.h>
 
-// Must match the value in src/im_neovim/resource.h.
+// Must match the value in src/im_neovim/platforms/resource.h.
 #define IDI_MAIN_ICON 101
 
 // Forward declare message handler from imgui_impl_win32.cpp

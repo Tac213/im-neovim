@@ -383,14 +383,14 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     # Generate the .rc file with absolute icon path.
     set(IMNVIM_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/nvim.ico")
     set(IMNVIM_MANIFEST_PATH
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/im_neovim/imnvim.manifest")
-    set(IMNVIM_RC_IN "${im_neovim_dir}/imnvim.rc.in")
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/im_neovim/platforms/imnvim.manifest")
+    set(IMNVIM_RC_IN "${im_neovim_dir}/platforms/imnvim.rc.in")
     set(IMNVIM_RC "${CMAKE_CURRENT_BINARY_DIR}/im_neovim/imnvim.rc")
     configure_file("${IMNVIM_RC_IN}" "${IMNVIM_RC}" @ONLY)
     target_sources(imnvim PRIVATE "${IMNVIM_RC}")
 
     # RC compiler needs to find resource.h (next to imnvim.rc.in).
-    target_include_directories(imnvim PRIVATE "${im_neovim_dir}")
+    target_include_directories(imnvim PRIVATE "${im_neovim_dir}/platforms")
 
     # Use our custom manifest (DPI awareness, UTF-8) instead of the
     # linker's auto-generated one.  /MANIFEST:NO disables the linker's
