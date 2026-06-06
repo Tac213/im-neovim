@@ -9,8 +9,8 @@
 namespace ImNeovim {
 LayerMainWindow::LayerMainWindow() {
     m_terminal = std::make_shared<Terminal>();
-    m_nvim = std::make_shared<NvimWidget>();
     m_file_tree = std::make_shared<FileTreeWidget>();
+    m_nvim = std::make_shared<NvimWidget>(m_file_tree->current_directory());
 
     // Create the dock layout manager
     m_dock_layout = std::make_shared<DockSpaceLayout>();

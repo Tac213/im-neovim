@@ -157,9 +157,15 @@ void NvimWidget::Grid::scroll_region(int count) {
     }
 }
 
-NvimWidget::NvimWidget() {
+NvimWidget::NvimWidget(std::filesystem::path initial_cwd) {
     m_window_title = "nvim (no file)";
     m_window_icon.clear();
+
+    if (initial_cwd.empty()) {
+        m_nvim_cwd = ImApp::path_to_string(std::filesystem::current_path());
+    } else {
+        m_nvim_cwd = ImApp::path_to_string(initial_cwd);
+    }
 
     // Initialize with safe default size
     m_state.row = 24;
@@ -951,17 +957,17 @@ std::shared_ptr<NvimRequest> NvimWidget::start_nvim_request(
 
 void NvimWidget::_spawn_nvim() {
     auto exe_path = ImApp::FileSystem::executable_path();
-    auto cwd = exe_path.parent_path();
+    auto exe_dir = exe_path.parent_path();
 #if defined(IM_APP_DARWIN)
     // Bundled .app: Neovim is in Contents/Resources/nvim/
     // Development (non-bundled): nvim/ sits next to the executable
     auto nvim_exe_path =
-        cwd.parent_path() / "Resources" / "nvim" / "bin" / "nvim";
+        exe_dir.parent_path() / "Resources" / "nvim" / "bin" / "nvim";
     if (!std::filesystem::exists(nvim_exe_path)) {
-        nvim_exe_path = cwd / "nvim" / "bin" / "nvim";
+        nvim_exe_path = exe_dir / "nvim" / "bin" / "nvim";
     }
 #else
-    auto nvim_exe_path = cwd / "nvim" / "bin" /
+    auto nvim_exe_path = exe_dir / "nvim" / "bin" /
 #if defined(IM_APP_WIN32)
                          "nvim.exe";
 #else
@@ -969,7 +975,6 @@ void NvimWidget::_spawn_nvim() {
 #endif
 #endif
     m_nvim_exe = ImApp::path_to_string(nvim_exe_path);
-    m_nvim_cwd = ImApp::path_to_string(cwd);
 
     char* args[3];
     args[0] = const_cast<char*>(m_nvim_exe.c_str());
