@@ -69,6 +69,10 @@ namespace ImNeovim {
 // via standard grid_line events. See the definition below for details.
 static void _redraw_win_extmark(msgpack::object_array& args);
 
+// Forward declaration: update_menu events are a stub — menu bar rendering
+// will be implemented later when multiple nvim widgets are supported.
+static void _redraw_update_menu(msgpack::object_array& args);
+
 // HighlightAttr implementation
 NvimWidget::HighlightAttr::HighlightAttr()
     : fg(1.0f, 1.0f, 1.0f, 1.0f), bg(0.0f, 0.0f, 0.0f, 1.0f),
@@ -1417,6 +1421,9 @@ void NvimWidget::_handle_nvim_redraw(std::string_view operation,
     case _hash("win_extmark"):
         _redraw_win_extmark(args);
         break;
+    case _hash("update_menu"):
+        _redraw_update_menu(args);
+        break;
     case _hash("msg_set_pos"):
         _redraw_msg_set_pos(args);
         break;
@@ -2637,6 +2644,11 @@ void NvimWidget::_redraw_win_viewport_margins(msgpack::object_array& args) {
 // cells by Neovim and delivered via standard grid_line events, which
 // _render_grid_layer already displays. This matches Neovide's approach.
 static void _redraw_win_extmark(msgpack::object_array& args) { (void)args; }
+
+// update_menu events signal that Neovim menu definitions have changed.
+// This is a stub — full menu bar rendering will be added when the
+// application supports multiple nvim widgets.
+static void _redraw_update_menu(msgpack::object_array& args) { (void)args; }
 
 void NvimWidget::_redraw_msg_set_pos(msgpack::object_array& args) {
     // ["msg_set_pos", grid, row, scrolled, sep_char, zindex, compindex]
@@ -4132,6 +4144,7 @@ NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
     std::size_t off = 0;
     while (off < len) {
         msgpack::unpacked result;
+        std::size_t prev_off = off;
         try {
             msgpack::unpack(result, msgpack_data.data(), len, off);
             LOG_TRACE("Parsed a complete nvim msgpack package (offset: {})",
@@ -4140,6 +4153,9 @@ NvimWidget::_handle_nvim_rpc(const std::vector<char>& msgpack_data) {
             _dispatch(obj);
         } catch (const msgpack::insufficient_bytes&) { // Incomplete data - stop
                                                        // and wait for more
+            // msgpack::unpack may partially advance `off` before throwing.
+            // Restore the previous offset to avoid losing data.
+            off = prev_off;
             LOG_TRACE("Incomplete msgpack data, waiting for more (offset: {})",
                       off);
             break;
