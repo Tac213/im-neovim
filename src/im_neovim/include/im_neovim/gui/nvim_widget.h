@@ -161,7 +161,6 @@ class NvimWidget : public TextWidget,
     void _redraw_win_close(msgpack::object_array& args);
     void _redraw_win_viewport(msgpack::object_array& args);
     void _redraw_win_viewport_margins(msgpack::object_array& args);
-    void _redraw_win_extmark(msgpack::object_array& args);
     void _redraw_msg_set_pos(msgpack::object_array& args);
 
     /* Cmdline event handlers */

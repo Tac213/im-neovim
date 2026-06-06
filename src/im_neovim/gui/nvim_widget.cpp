@@ -64,6 +64,11 @@ namespace {
 
 namespace ImNeovim {
 
+// Forward declaration: win_extmark events are intentionally not handled —
+// signs and virtual text are rendered into grid cells by Neovim and delivered
+// via standard grid_line events. See the definition below for details.
+static void _redraw_win_extmark(msgpack::object_array& args);
+
 // HighlightAttr implementation
 NvimWidget::HighlightAttr::HighlightAttr()
     : fg(1.0f, 1.0f, 1.0f, 1.0f), bg(0.0f, 0.0f, 0.0f, 1.0f),
@@ -2627,22 +2632,11 @@ void NvimWidget::_redraw_win_viewport_margins(msgpack::object_array& args) {
               top, bottom, left, right);
 }
 
-void NvimWidget::_redraw_win_extmark(msgpack::object_array& args) {
-    // ["win_extmark", grid, win, ns_id, mark_id, row, col]
-    if (args.size < 6) {
-        LOG_WARN("win_extmark: expected 6 arguments, got {}", args.size);
-        return;
-    }
-
-    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
-    int ns_id = static_cast<int>(args.ptr[2].as<int64_t>());
-    int mark_id = static_cast<int>(args.ptr[3].as<int64_t>());
-    int row = static_cast<int>(args.ptr[4].as<int64_t>());
-    int col = static_cast<int>(args.ptr[5].as<int64_t>());
-
-    LOG_TRACE("win_extmark: grid={} ns_id={} mark_id={} pos=({},{})", grid_id,
-              ns_id, mark_id, row, col);
-}
+// win_extmark events carry only position (grid, win, ns_id, mark_id, row, col)
+// — no decoration data. Sign characters and virtual text are rendered into grid
+// cells by Neovim and delivered via standard grid_line events, which
+// _render_grid_layer already displays. This matches Neovide's approach.
+static void _redraw_win_extmark(msgpack::object_array& args) { (void)args; }
 
 void NvimWidget::_redraw_msg_set_pos(msgpack::object_array& args) {
     // ["msg_set_pos", grid, row, scrolled, sep_char, zindex, compindex]
