@@ -190,6 +190,10 @@ class NvimWidget : public TextWidget,
                                float char_width, float line_height);
     uint32_t _cmdline_block_rows() const;
 
+    // Total rows currently needed by all bottom overlays (cmdline + block +
+    // messages).
+    uint32_t _overlay_rows() const;
+
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
     static void _on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
@@ -296,6 +300,11 @@ class NvimWidget : public TextWidget,
         uint32_t row{0};
         uint32_t col{0};
     } m_state;
+
+    // Total display rows available (including rows reserved for bottom
+    // overlays). m_state.row (the grid rows sent to Neovim) = m_display_rows -
+    // _overlay_rows().
+    uint32_t m_display_rows{0};
 
     // Cursor shape for different modes
     enum class CursorShape { Block, Horizontal, Vertical };

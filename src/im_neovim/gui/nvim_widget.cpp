@@ -175,6 +175,8 @@ NvimWidget::NvimWidget() {
     m_current_hl.bg = m_default_bg;
     m_current_hl.sp = m_default_sp;
 
+    m_display_rows = m_state.row;
+
     // Create default grid
     Grid default_grid;
     default_grid.id = 1;
@@ -292,7 +294,7 @@ void NvimWidget::render() {
 
         _render_grid(draw_list, pos, char_width, line_height);
 
-        if (m_msg_visible || m_msg_history_visible) {
+        if (m_msg_visible || m_msg_history_visible || m_msg_showmode_visible) {
             _render_message_area(draw_list, pos, char_width, line_height);
         }
 
@@ -393,22 +395,12 @@ void NvimWidget::_render_grid_layer(ImDrawList* draw_list, const Grid& grid,
                                     float line_height, bool render_cursor) {
     float effective_line_height = line_height + static_cast<float>(m_linespace);
 
-    // When rendering the main grid (grid 1), account for cmdline/message rows
-    uint32_t msg_rows = 0;
-    uint32_t block_rows = 0;
-    uint32_t cmdline_rows = 0;
-    if (grid.id == 1) {
-        msg_rows = _message_area_rows();
-        block_rows = _cmdline_block_rows();
-        cmdline_rows = m_cmdline_visible ? 1 : 0;
-    }
-    uint32_t render_rows =
-        (grid.height > cmdline_rows + msg_rows + block_rows)
-            ? grid.height - cmdline_rows - msg_rows - block_rows
-            : grid.height;
+    // Bottom overlays (message area, cmdline block, cmdline) occupy dedicated
+    // rows below the grid (reserved via m_display_rows - m_state.row).  The
+    // grid itself is rendered in full — no rows are subtracted.
 
     // Draw all cells
-    for (uint32_t y = 0; y < render_rows; y++) {
+    for (uint32_t y = 0; y < grid.height; y++) {
         bool skip_next = false;
         for (uint32_t x = 0; x < grid.width; x++) {
             if (skip_next) {
@@ -560,31 +552,13 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
                            line_height, render_cursor);
     }
 
-    // Mode indicator overlay (on the main grid area)
-    if (!m_current_mode_name.empty() && !m_cmdline_visible && main_grid) {
-        std::string mode_text = "-- " + m_current_mode_name + " --";
-        if (!mode_text.empty() && mode_text[3] >= 'a' && mode_text[3] <= 'z') {
-            mode_text[3] = static_cast<char>(mode_text[3] - 'a' + 'A');
-        }
-
-        float text_width = ImGui::CalcTextSize(mode_text.c_str()).x;
-        ImVec2 mode_pos(pos.x +
-                            (main_grid->width * char_width - text_width) * 0.5f,
-                        pos.y + main_grid->height * effective_line_height -
-                            effective_line_height);
-
-        ImU32 mode_color =
-            ImGui::ColorConvertFloat4ToU32(ImVec4(0.7f, 0.7f, 0.7f, 0.6f));
-        draw_list->AddText(mode_pos, mode_color, mode_text.c_str());
-    }
-
-    // Visual bell flash (over the overall grid area)
+    // Visual bell flash (over the entire display area including overlay rows)
     if (m_bell_pending && main_grid) {
         double elapsed = ImGui::GetTime() - m_bell_timestamp;
         if (elapsed < 0.2) {
             float alpha = 0.15f * (1.0f - static_cast<float>(elapsed / 0.2));
             ImVec2 grid_end(pos.x + main_grid->width * char_width,
-                            pos.y + main_grid->height * effective_line_height);
+                            pos.y + m_display_rows * effective_line_height);
             draw_list->AddRectFilled(pos, grid_end,
                                      ImGui::ColorConvertFloat4ToU32(
                                          ImVec4(1.0f, 1.0f, 1.0f, alpha)));
@@ -604,9 +578,9 @@ void NvimWidget::_render_cmdline(ImDrawList* draw_list, const ImVec2& pos,
     Grid& grid = it->second;
     float effective_line_height = line_height + static_cast<float>(m_linespace);
 
-    // The cmdline occupies the absolute last row of the widget. The message
-    // area (if visible) sits between the grid content and the cmdline.
-    float cmdline_y = pos.y + (grid.height - 1) * effective_line_height;
+    // The cmdline occupies the absolute last row of the widget, positioned
+    // relative to m_display_rows (total area including reserved overlay rows).
+    float cmdline_y = pos.y + (m_display_rows - 1) * effective_line_height;
 
     // Build the full display text and apply highlighting chunks.
     std::string full_text;
@@ -2779,6 +2753,20 @@ void NvimWidget::_cmdline_show(msgpack::object_array& args) {
     // hl_id (prompt highlight, unused for now)
     // args.ptr[6] ignored
 
+    // When cmdline is shown, clear any pending messages — the cmdline
+    // takes priority over the message area (matching Neovim TUI behavior).
+    if (m_msg_visible) {
+        m_msg_visible = false;
+        m_msg_entries.clear();
+        m_msg_kind.clear();
+    }
+    m_msg_showmode_visible = false;
+    m_msg_showmode_content.clear();
+    m_msg_showcmd_visible = false;
+    m_msg_showcmd_content.clear();
+    m_msg_ruler_visible = false;
+    m_msg_ruler_content.clear();
+
     m_cmdline_visible = true;
     LOG_TRACE("cmdline_show: level={}, pos={}, chunks={}, firstc='{}', "
               "prompt='{}', indent={}",
@@ -3036,6 +3024,14 @@ void NvimWidget::_redraw_msg_show(msgpack::object_array& args) {
     m_msg_kind = kind;
     m_msg_visible = true;
 
+    // Showmode and regular messages are mutually exclusive — they share
+    // the same bottom row in Neovim's TUI.  Clear showmode when a message
+    // arrives (unless appending to an existing message).
+    if (!append) {
+        m_msg_showmode_visible = false;
+        m_msg_showmode_content.clear();
+    }
+
     LOG_TRACE("msg_show: kind='{}', chunks={}, replace_last={}, append={}",
               kind, chunks.size(), replace_last, append);
 }
@@ -3078,6 +3074,16 @@ void NvimWidget::_redraw_msg_showmode(msgpack::object_array& args) {
     }
 
     m_msg_showmode_visible = !m_msg_showmode_content.empty();
+
+    // Showmode and regular messages are mutually exclusive — they share
+    // the same bottom row in Neovim's TUI.  When showmode content arrives,
+    // clear any pending regular messages.
+    if (m_msg_showmode_visible) {
+        m_msg_visible = false;
+        m_msg_entries.clear();
+        m_msg_kind.clear();
+    }
+
     LOG_TRACE("msg_showmode: visible={}, chunks={}", m_msg_showmode_visible,
               m_msg_showmode_content.size());
 }
@@ -3239,8 +3245,9 @@ uint32_t NvimWidget::_message_area_rows() const {
         return std::min(static_cast<uint32_t>(m_msg_history_entries.size()),
                         uint32_t{10});
     }
-    if (m_msg_visible) {
-        // Active messages: reserve 1 row for message display
+    if (m_msg_visible || m_msg_showmode_visible) {
+        // Active messages or mode indicator (e.g. "-- INSERT --"):
+        // reserve 1 row for display.
         return 1;
     }
     return 0;
@@ -3263,9 +3270,11 @@ void NvimWidget::_render_message_area(ImDrawList* draw_list, const ImVec2& pos,
         return;
     }
 
-    // The message area starts above the cmdline block (if any) and cmdline.
-    float msg_y = pos.y + (grid.height - cmdline_rows - block_rows - msg_rows) *
-                              effective_line_height;
+    // The message area starts above the cmdline block (if any) and cmdline,
+    // positioned relative to m_display_rows (total area).
+    float msg_y =
+        pos.y + (m_display_rows - cmdline_rows - block_rows - msg_rows) *
+                    effective_line_height;
 
     // Render background for the entire message area
     ImVec2 msg_area_min(pos.x, msg_y);
@@ -3350,16 +3359,12 @@ void NvimWidget::_render_message_area(ImDrawList* draw_list, const ImVec2& pos,
 
     // --- Normal message mode (single row) ---
     float msg_row_y = msg_y;
-
-    // Build combined message text from the last visible entry
-    auto& entries = m_msg_entries;
-    if (entries.empty()) {
-        return;
-    }
-
     float x = pos.x;
 
-    // Render showmode content first (e.g. "-- INSERT --") if visible
+    // Render showmode content first (e.g. "-- INSERT --") if visible.
+    // This is rendered even when there are no message entries, because
+    // Neovim sends mode text exclusively via msg_showmode when
+    // ext_messages is enabled.
     if (m_msg_showmode_visible) {
         for (const auto& chunk : m_msg_showmode_content) {
             if (chunk.text.empty()) {
@@ -3372,23 +3377,28 @@ void NvimWidget::_render_message_area(ImDrawList* draw_list, const ImVec2& pos,
                     fg = hl_it->second.fg;
                 }
             }
-            // Showmode gets bold appearance
             ImU32 text_color = ImGui::ColorConvertFloat4ToU32(fg);
             draw_list->AddText(ImVec2(x, msg_row_y), text_color,
                                chunk.text.c_str());
             x += ImGui::CalcTextSize(chunk.text.c_str()).x;
         }
-        // Separator after showmode
-        if (!entries.empty()) {
-            ImU32 sep =
-                ImGui::ColorConvertFloat4ToU32(ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-            draw_list->AddText(ImVec2(x, msg_row_y), sep, "  ");
-            x += ImGui::CalcTextSize("  ").x;
-        }
+    }
+
+    // Build combined message text from the last visible entry.
+    if (m_msg_entries.empty()) {
+        return;
+    }
+
+    // Separator between showmode and message text
+    if (m_msg_showmode_visible) {
+        ImU32 sep =
+            ImGui::ColorConvertFloat4ToU32(ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        draw_list->AddText(ImVec2(x, msg_row_y), sep, "  ");
+        x += ImGui::CalcTextSize("  ").x;
     }
 
     // Render the last message entry's content with highlighting
-    const auto& last_entry = entries.back();
+    const auto& last_entry = m_msg_entries.back();
     for (const auto& chunk : last_entry.content) {
         if (chunk.text.empty()) {
             continue;
@@ -3477,6 +3487,18 @@ uint32_t NvimWidget::_cmdline_block_rows() const {
     return static_cast<uint32_t>(m_cmdline_block_lines.size());
 }
 
+uint32_t NvimWidget::_overlay_rows() const {
+    uint32_t rows = 0;
+    if (m_cmdline_visible) {
+        rows += 1;
+    }
+    rows += _cmdline_block_rows();
+    rows += _message_area_rows();
+    // Always reserve at least 1 row at the bottom for cmdline/messages,
+    // matching Neovim's default 'cmdheight'=1 behavior.
+    return std::max(1u, rows);
+}
+
 void NvimWidget::_render_cmdline_block(ImDrawList* draw_list, const ImVec2& pos,
                                        float char_width, float line_height) {
     auto it = m_grids.find(m_current_grid);
@@ -3494,8 +3516,9 @@ void NvimWidget::_render_cmdline_block(ImDrawList* draw_list, const ImVec2& pos,
         return;
     }
 
-    // The block sits above the cmdline, below the message area.
-    float block_y = pos.y + (grid.height - cmdline_rows - block_rows) *
+    // The block sits above the cmdline, below the message area,
+    // positioned relative to m_display_rows (total area).
+    float block_y = pos.y + (m_display_rows - cmdline_rows - block_rows) *
                                 effective_line_height;
 
     // Background fill
@@ -3810,12 +3833,23 @@ void NvimWidget::_handle_nvim_resize() {
 
     uint32_t new_cols =
         std::max(1u, static_cast<uint32_t>(content_size.x / char_width));
-    uint32_t new_rows =
+    uint32_t total_rows =
         std::max(1u, static_cast<uint32_t>(content_size.y / line_height));
 
-    if (new_cols != m_state.col || new_rows != m_state.row) {
-        LOG_TRACE("Resizing nvim widget.");
-        resize(new_cols, new_rows);
+    // Reserve bottom rows for cmdline / cmdline-block / message overlays.
+    // Neovim gets a smaller grid so it places the statusline above the
+    // reserved area, preventing overlap with the overlays.
+    uint32_t overlay = _overlay_rows();
+    uint32_t grid_rows =
+        (total_rows > overlay) ? total_rows - overlay : total_rows;
+
+    if (new_cols != m_state.col || grid_rows != m_state.row) {
+        LOG_TRACE("Resizing nvim widget: {}x{} (display {}x{})", new_cols,
+                  grid_rows, new_cols, total_rows);
+        m_display_rows = total_rows;
+        resize(new_cols, grid_rows);
+    } else if (total_rows != m_display_rows) {
+        m_display_rows = total_rows;
     }
 }
 
