@@ -1149,11 +1149,20 @@ void NvimWidget::_initialize() {
         nullptr);
     req->arg_uint32(m_state.col);
     req->arg_uint32(m_state.row);
-    req->arg_map(5);
+    req->arg_map(6);
     {
         std::string rgb_key{"rgb"};
         req->arg_str(rgb_key.size());
         req->arg_str_body(rgb_key.c_str(), rgb_key.size());
+        req->arg_true();
+
+        // Second revision of the grid protocol: provides grid_line,
+        // hl_attr_define, grid_resize, grid_scroll, grid_destroy, etc.
+        // (Neovim force-enables this when ext_multigrid is set, but we
+        //  list it explicitly here to document our dependency.)
+        std::string linegrid_key{"ext_linegrid"};
+        req->arg_str(linegrid_key.size());
+        req->arg_str_body(linegrid_key.c_str(), linegrid_key.size());
         req->arg_true();
 
         std::string multigrid_key{"ext_multigrid"};
