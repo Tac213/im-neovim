@@ -125,6 +125,7 @@ class NvimWidget : public TextWidget,
     void _redraw_flush(msgpack::object_array& args);
     void _redraw_option_set(msgpack::object_array& args);
     void _redraw_set_title(msgpack::object_array& args);
+    void _redraw_set_icon(msgpack::object_array& args);
     void _redraw_default_colors_set(msgpack::object_array& args);
     void _redraw_set_scroll_region(msgpack::object_array& args);
     void _redraw_scroll(msgpack::object_array& args);
@@ -352,6 +353,7 @@ class NvimWidget : public TextWidget,
     bool m_dark_mode{true};
     bool m_needs_render{true};
     std::string m_pending_input;
+    std::string m_window_icon;
 
     // Mouse tracking state
     struct {

@@ -159,6 +159,7 @@ void NvimWidget::Grid::scroll_region(int count) {
 
 NvimWidget::NvimWidget() {
     m_window_title = "nvim (no file)";
+    m_window_icon.clear();
 
     // Initialize with safe default size
     m_state.row = 24;
@@ -1298,6 +1299,9 @@ void NvimWidget::_handle_nvim_redraw(std::string_view operation,
     case _hash("set_title"):
         _redraw_set_title(args);
         break;
+    case _hash("set_icon"):
+        _redraw_set_icon(args);
+        break;
     case _hash("default_colors_set"):
         _redraw_default_colors_set(args);
         break;
@@ -1763,6 +1767,27 @@ void NvimWidget::_redraw_set_title(msgpack::object_array& args) {
     } else {
         m_window_title = title;
     }
+}
+
+void NvimWidget::_redraw_set_icon(msgpack::object_array& args) {
+    size_t icon_idx = 0;
+
+    // Skip grid_id if present
+    if (args.size >= 2 && args.ptr[0].type == msgpack::type::POSITIVE_INTEGER) {
+        icon_idx = 1;
+    }
+
+    if (args.size < icon_idx + 1) {
+        LOG_WARN("set_icon: expected at least {} arguments, got {}",
+                 icon_idx + 1, args.size);
+        return;
+    }
+    if (args.ptr[icon_idx].type != msgpack::type::STR) {
+        LOG_WARN("set_icon: icon must be a string");
+        return;
+    }
+
+    m_window_icon = args.ptr[icon_idx].as<std::string>();
 }
 
 void NvimWidget::_redraw_default_colors_set(msgpack::object_array& args) {
