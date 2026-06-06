@@ -18,6 +18,48 @@ namespace {
     return h;
 }
 
+/// Decode a Neovim handle (Window, Buffer, Tabpage) from a msgpack object.
+/// Neovim serializes handles as EXT types: fixext1 for small values (-0x1f to
+/// 0x7f) or ext8+ for larger values. Also handles plain integers for backward
+/// compatibility.
+[[nodiscard]] inline int64_t _extract_handle(const msgpack::object& obj) {
+    if (obj.type == msgpack::type::POSITIVE_INTEGER) {
+        return static_cast<int64_t>(obj.as<uint64_t>());
+    }
+    if (obj.type == msgpack::type::NEGATIVE_INTEGER) {
+        return obj.as<int64_t>();
+    }
+    if (obj.type == msgpack::type::EXT) {
+        // Neovim EXT format: [type_byte][payload].
+        // msgpack-c's via.ext.ptr points to the type byte; via.ext.size is
+        // the payload-only length (type byte already excluded by msgpack-c).
+        // fixext1 (size==1): payload is a raw signed byte.
+        // ext8+   (size>=1): payload is a msgpack-encoded uint.
+        const char* payload = obj.via.ext.ptr + 1; // skip type byte
+        uint32_t payload_size = obj.via.ext.size;
+        if (payload_size == 0) {
+            return 0;
+        }
+        if (payload_size == 1) {
+            // fixext 1: single signed byte payload
+            return static_cast<int64_t>(
+                static_cast<int8_t>(obj.via.ext.ptr[1]));
+        }
+        // ext 8+: msgpack-encoded uint
+        msgpack::unpacked result;
+        std::size_t off = 0;
+        msgpack::unpack(result, payload, payload_size, off);
+        msgpack::object inner = result.get();
+        if (inner.type == msgpack::type::POSITIVE_INTEGER) {
+            return static_cast<int64_t>(inner.as<uint64_t>());
+        }
+        if (inner.type == msgpack::type::NEGATIVE_INTEGER) {
+            return inner.as<int64_t>();
+        }
+    }
+    return 0; // Fallback: unrecognized type
+}
+
 } // namespace
 
 namespace ImNeovim {
@@ -271,24 +313,85 @@ void NvimWidget::render() {
     }
 }
 
-void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
-                              float char_width, float line_height) {
-    auto it = m_grids.find(m_current_grid);
-    if (it == m_grids.end()) {
-        return;
+std::vector<uint32_t> NvimWidget::_collect_visible_layers() const {
+    std::vector<uint32_t> layers;
+
+    // Gather all visible non-floating grids sorted by position
+    for (const auto& [grid_id, info] : m_windows) {
+        if (!info.visible) {
+            continue;
+        }
+        auto grid_it = m_grids.find(grid_id);
+        if (grid_it == m_grids.end()) {
+            continue;
+        }
+        if (info.floating) {
+            continue; // Floaters handled below
+        }
+        layers.push_back(grid_id);
     }
 
-    Grid& grid = it->second;
+    // Ensure grid 1 is always rendered first as the base
+    bool has_grid1 = false;
+    for (auto id : layers) {
+        if (id == 1) {
+            has_grid1 = true;
+            break;
+        }
+    }
+    if (!has_grid1 && m_grids.find(1) != m_grids.end()) {
+        layers.insert(layers.begin(), 1);
+    }
 
+    // Sort non-floating grids by row, then col
+    std::sort(layers.begin(), layers.end(), [this](uint32_t a, uint32_t b) {
+        auto it_a = m_windows.find(a);
+        auto it_b = m_windows.find(b);
+        if (it_a == m_windows.end() || it_b == m_windows.end()) {
+            return a < b;
+        }
+        if (it_a->second.start_row != it_b->second.start_row) {
+            return it_a->second.start_row < it_b->second.start_row;
+        }
+        return it_a->second.start_col < it_b->second.start_col;
+    });
+
+    // Gather floating grids sorted by compindex (ascending → later = on top)
+    std::vector<std::pair<int, uint32_t>> floating;
+    for (const auto& [grid_id, info] : m_windows) {
+        if (!info.visible || !info.floating) {
+            continue;
+        }
+        auto grid_it = m_grids.find(grid_id);
+        if (grid_it == m_grids.end()) {
+            continue;
+        }
+        floating.emplace_back(info.compindex, grid_id);
+    }
+    std::sort(floating.begin(), floating.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    for (const auto& [comp, grid_id] : floating) {
+        layers.push_back(grid_id);
+    }
+
+    return layers;
+}
+
+void NvimWidget::_render_grid_layer(ImDrawList* draw_list, const Grid& grid,
+                                    const ImVec2& origin, float char_width,
+                                    float line_height, bool render_cursor) {
     float effective_line_height = line_height + static_cast<float>(m_linespace);
 
-    // When the cmdline is visible, skip the last row — it is reserved for the
-    // command line (matching nvim TUI behaviour).
-    // When messages are visible, skip additional rows above the cmdline.
-    // When a cmdline block is visible, skip rows for it above the messages.
-    uint32_t msg_rows = _message_area_rows();
-    uint32_t block_rows = _cmdline_block_rows();
-    uint32_t cmdline_rows = m_cmdline_visible ? 1 : 0;
+    // When rendering the main grid (grid 1), account for cmdline/message rows
+    uint32_t msg_rows = 0;
+    uint32_t block_rows = 0;
+    uint32_t cmdline_rows = 0;
+    if (grid.id == 1) {
+        msg_rows = _message_area_rows();
+        block_rows = _cmdline_block_rows();
+        cmdline_rows = m_cmdline_visible ? 1 : 0;
+    }
     uint32_t render_rows =
         (grid.height > cmdline_rows + msg_rows + block_rows)
             ? grid.height - cmdline_rows - msg_rows - block_rows
@@ -298,14 +401,13 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
     for (uint32_t y = 0; y < render_rows; y++) {
         bool skip_next = false;
         for (uint32_t x = 0; x < grid.width; x++) {
-            // Skip the filler cell after a double-width character
             if (skip_next) {
                 skip_next = false;
                 continue;
             }
 
-            ImVec2 char_pos(pos.x + x * char_width,
-                            pos.y + y * effective_line_height);
+            ImVec2 char_pos(origin.x + x * char_width,
+                            origin.y + y * effective_line_height);
             bool wide_rendered = TextWidget::render_cell(
                 draw_list, grid.cells[y][x], char_pos, char_width, line_height);
             if (wide_rendered) {
@@ -315,8 +417,7 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
     }
 
     // Draw cursor
-    if (ImGui::IsWindowFocused() && m_nvim_attached) {
-        // Blink timing logic
+    if (render_cursor && ImGui::IsWindowFocused() && m_nvim_attached) {
         bool show_cursor = true;
         if (m_cursor_blinkon > 0 || m_cursor_blinkoff > 0) {
             double now = ImGui::GetTime();
@@ -341,10 +442,10 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
         }
 
         if (show_cursor) {
-            ImVec2 cursor_pos(pos.x + m_state.cursor_x * char_width,
-                              pos.y + m_state.cursor_y * effective_line_height);
+            ImVec2 cursor_pos(origin.x + m_state.cursor_x * char_width,
+                              origin.y +
+                                  m_state.cursor_y * effective_line_height);
 
-            // Determine if the character under cursor is wide
             bool cursor_is_wide = false;
             ScreenCell cursor_cell;
             if (m_state.cursor_y < grid.height &&
@@ -356,7 +457,6 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
             float cursor_width =
                 cursor_is_wide ? char_width * 2.0f : char_width;
 
-            // Cursor rect based on shape and cell percentage
             ImVec2 cursor_min = cursor_pos;
             ImVec2 cursor_max(cursor_pos.x + cursor_width,
                               cursor_pos.y + line_height);
@@ -370,14 +470,12 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
                 cursor_max.x = cursor_pos.x + cursor_width * pct;
                 break;
             case CursorShape::Block:
-                // Full cell, no adjustment needed
                 break;
             }
 
             ImVec4 cursor_color{m_dark_mode ? 0.7f : 0.3f,
                                 m_dark_mode ? 0.7f : 0.3f,
                                 m_dark_mode ? 0.7f : 0.3f, 0.8f};
-            // Dim cursor when busy
             if (m_busy) {
                 cursor_color.w = 0.4f;
             }
@@ -403,19 +501,66 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
             }
         }
     }
+}
 
-    // Mode indicator overlay — only when cmdline is NOT visible (the cmdline
-    // bar at the bottom serves as the mode indicator itself).
-    if (!m_current_mode_name.empty() && !m_cmdline_visible) {
+void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
+                              float char_width, float line_height) {
+    if (!m_multigrid_enabled) {
+        // Fallback: single-grid rendering (legacy path)
+        auto it = m_grids.find(m_current_grid);
+        if (it == m_grids.end()) {
+            return;
+        }
+        _render_grid_layer(draw_list, it->second, pos, char_width, line_height,
+                           true);
+        return;
+    }
+
+    // Composited multi-grid rendering
+    auto layers = _collect_visible_layers();
+    float effective_line_height = line_height + static_cast<float>(m_linespace);
+
+    Grid* main_grid = nullptr;
+    auto main_it = m_grids.find(1);
+    if (main_it != m_grids.end()) {
+        main_grid = &main_it->second;
+    }
+
+    for (size_t i = 0; i < layers.size(); i++) {
+        uint32_t grid_id = layers[i];
+        auto grid_it = m_grids.find(grid_id);
+        if (grid_it == m_grids.end() || !grid_it->second.visible) {
+            continue;
+        }
+
+        auto win_it = m_windows.find(grid_id);
+        ImVec2 origin = pos;
+        if (win_it != m_windows.end() && win_it->second.floating) {
+            // Floating grids: positioned at their screen_row / screen_col
+            origin.x = pos.x + win_it->second.start_col * char_width;
+            origin.y = pos.y + win_it->second.start_row * effective_line_height;
+        } else if (win_it != m_windows.end()) {
+            // Non-floating grids at their win_pos position
+            origin.x = pos.x + win_it->second.start_col * char_width;
+            origin.y = pos.y + win_it->second.start_row * effective_line_height;
+        }
+
+        bool render_cursor = (grid_id == m_current_grid);
+        _render_grid_layer(draw_list, grid_it->second, origin, char_width,
+                           line_height, render_cursor);
+    }
+
+    // Mode indicator overlay (on the main grid area)
+    if (!m_current_mode_name.empty() && !m_cmdline_visible && main_grid) {
         std::string mode_text = "-- " + m_current_mode_name + " --";
-        // Capitalize first letter
         if (!mode_text.empty() && mode_text[3] >= 'a' && mode_text[3] <= 'z') {
             mode_text[3] = static_cast<char>(mode_text[3] - 'a' + 'A');
         }
 
         float text_width = ImGui::CalcTextSize(mode_text.c_str()).x;
-        ImVec2 mode_pos(pos.x + (grid.width * char_width - text_width) * 0.5f,
-                        pos.y + grid.height * effective_line_height -
+        ImVec2 mode_pos(pos.x +
+                            (main_grid->width * char_width - text_width) * 0.5f,
+                        pos.y + main_grid->height * effective_line_height -
                             effective_line_height);
 
         ImU32 mode_color =
@@ -423,13 +568,13 @@ void NvimWidget::_render_grid(ImDrawList* draw_list, const ImVec2& pos,
         draw_list->AddText(mode_pos, mode_color, mode_text.c_str());
     }
 
-    // Visual bell flash (200ms semi-transparent overlay)
-    if (m_bell_pending) {
+    // Visual bell flash (over the overall grid area)
+    if (m_bell_pending && main_grid) {
         double elapsed = ImGui::GetTime() - m_bell_timestamp;
         if (elapsed < 0.2) {
             float alpha = 0.15f * (1.0f - static_cast<float>(elapsed / 0.2));
-            ImVec2 grid_end(pos.x + grid.width * char_width,
-                            pos.y + grid.height * effective_line_height);
+            ImVec2 grid_end(pos.x + main_grid->width * char_width,
+                            pos.y + main_grid->height * effective_line_height);
             draw_list->AddRectFilled(pos, grid_end,
                                      ImGui::ColorConvertFloat4ToU32(
                                          ImVec4(1.0f, 1.0f, 1.0f, alpha)));
@@ -1073,8 +1218,8 @@ void NvimWidget::_handle_nvim_notification(std::string_view event,
             }
             std::string operation = arg.via.array.ptr[0].as<std::string>();
 
-            for (size_t i = 1; i < arg.via.array.size; i++) {
-                auto& op_args = arg.via.array.ptr[i];
+            for (size_t j = 1; j < arg.via.array.size; j++) {
+                auto& op_args = arg.via.array.ptr[j];
                 if (op_args.type != msgpack::type::ARRAY) {
                     LOG_WARN("Received unexpected redraw operation '{}', "
                              "operation argument is not an array.",
@@ -1236,6 +1381,30 @@ void NvimWidget::_handle_nvim_redraw(std::string_view operation,
         break;
     case _hash("msg_history_show"):
         _redraw_msg_history_show(args);
+        break;
+    case _hash("win_pos"):
+        _redraw_win_pos(args);
+        break;
+    case _hash("win_float_pos"):
+        _redraw_win_float_pos(args);
+        break;
+    case _hash("win_hide"):
+        _redraw_win_hide(args);
+        break;
+    case _hash("win_close"):
+        _redraw_win_close(args);
+        break;
+    case _hash("win_viewport"):
+        _redraw_win_viewport(args);
+        break;
+    case _hash("win_viewport_margins"):
+        _redraw_win_viewport_margins(args);
+        break;
+    case _hash("win_extmark"):
+        _redraw_win_extmark(args);
+        break;
+    case _hash("msg_set_pos"):
+        _redraw_msg_set_pos(args);
         break;
     default:
         LOG_TRACE("Unhandled redraw operation: {}", operation);
@@ -2154,6 +2323,7 @@ void NvimWidget::_redraw_grid_destroy(msgpack::object_array& args) {
 
     uint32_t grid_id = args.ptr[0].as<uint32_t>();
     m_grids.erase(grid_id);
+    m_windows.erase(grid_id);
 
     // If we destroyed the current grid, switch to grid 1
     if (grid_id == m_current_grid && grid_id != 1) {
@@ -2240,6 +2410,266 @@ void NvimWidget::_redraw_hl_group_set(msgpack::object_array& args) {
     std::string group_name = args.ptr[0].as<std::string>();
     int hl_id = static_cast<int>(args.ptr[1].as<uint32_t>());
     m_hl_group_map[group_name] = hl_id;
+}
+
+// --- Window positioning handlers (ext_multigrid) ---
+
+void NvimWidget::_redraw_win_pos(msgpack::object_array& args) {
+    // ["win_pos", grid, win, start_row, start_col, width, height]
+    if (args.size < 6) {
+        LOG_WARN("win_pos: expected 6 arguments, got {}", args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+    int64_t win_handle = _extract_handle(args.ptr[1]);
+    int start_row = static_cast<int>(args.ptr[2].as<int64_t>());
+    int start_col = static_cast<int>(args.ptr[3].as<int64_t>());
+    int width = static_cast<int>(args.ptr[4].as<int64_t>());
+    int height = static_cast<int>(args.ptr[5].as<int64_t>());
+
+    auto& info = m_windows[grid_id];
+    info.grid_id = grid_id;
+    info.window_handle = static_cast<uint64_t>(win_handle);
+    info.visible = true;
+    info.floating = false;
+    info.start_row = start_row;
+    info.start_col = start_col;
+    info.width = width;
+    info.height = height;
+
+    // Ensure grid exists and is sized correctly
+    auto it = m_grids.find(grid_id);
+    if (it == m_grids.end()) {
+        Grid new_grid;
+        new_grid.id = grid_id;
+        new_grid.resize(static_cast<uint32_t>(width),
+                        static_cast<uint32_t>(height));
+        new_grid.visible = true;
+        m_grids[grid_id] = std::move(new_grid);
+    } else {
+        it->second.resize(static_cast<uint32_t>(width),
+                          static_cast<uint32_t>(height));
+        it->second.visible = true;
+    }
+
+    LOG_TRACE("win_pos: grid={} win={} pos=({},{}) size=({},{})", grid_id,
+              win_handle, start_row, start_col, width, height);
+}
+
+void NvimWidget::_redraw_win_float_pos(msgpack::object_array& args) {
+    // ["win_float_pos", grid, win, anchor, anchor_grid, anchor_row,
+    //   anchor_col, mouse_enabled, zindex, compindex, screen_row, screen_col]
+    if (args.size < 11) {
+        LOG_WARN("win_float_pos: expected 11 arguments, got {}", args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+    int64_t win_val = _extract_handle(args.ptr[1]);
+    uint64_t win_handle = (win_val >= 0) ? static_cast<uint64_t>(win_val) : 0;
+    std::string anchor = args.ptr[2].as<std::string>();
+    int anchor_grid = static_cast<int>(args.ptr[3].as<int64_t>());
+    float anchor_row = args.ptr[4].as<float>();
+    float anchor_col = args.ptr[5].as<float>();
+    bool mouse_enabled = args.ptr[6].as<bool>();
+    int zindex = static_cast<int>(args.ptr[7].as<int64_t>());
+    int compindex = static_cast<int>(args.ptr[8].as<int64_t>());
+    int screen_row = static_cast<int>(args.ptr[9].as<int64_t>());
+    int screen_col = static_cast<int>(args.ptr[10].as<int64_t>());
+
+    auto& info = m_windows[grid_id];
+    info.grid_id = grid_id;
+    info.window_handle = win_handle;
+    info.visible = true;
+    info.floating = true;
+    info.start_row = screen_row;
+    info.start_col = screen_col;
+    info.anchor = std::move(anchor);
+    info.anchor_grid = anchor_grid;
+    info.anchor_row = anchor_row;
+    info.anchor_col = anchor_col;
+    info.mouse_enabled = mouse_enabled;
+    info.zindex = zindex;
+    info.compindex = compindex;
+
+    // Ensure grid exists
+    auto it = m_grids.find(grid_id);
+    if (it != m_grids.end()) {
+        info.width = static_cast<int>(it->second.width);
+        info.height = static_cast<int>(it->second.height);
+        it->second.visible = true;
+        it->second.compindex = compindex;
+    }
+
+    LOG_TRACE("win_float_pos: grid={} win={} anchor={} zidx={} comp={} "
+              "screen=({},{}) mouse={}",
+              grid_id, win_handle, info.anchor, zindex, compindex, screen_row,
+              screen_col, mouse_enabled);
+}
+
+void NvimWidget::_redraw_win_hide(msgpack::object_array& args) {
+    // ["win_hide", grid]
+    if (args.size < 1) {
+        LOG_WARN("win_hide: expected 1 argument, got {}", args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+
+    auto win_it = m_windows.find(grid_id);
+    if (win_it != m_windows.end()) {
+        win_it->second.visible = false;
+    }
+
+    auto grid_it = m_grids.find(grid_id);
+    if (grid_it != m_grids.end()) {
+        grid_it->second.visible = false;
+    }
+
+    LOG_TRACE("win_hide: grid={}", grid_id);
+}
+
+void NvimWidget::_redraw_win_close(msgpack::object_array& args) {
+    // ["win_close", grid]
+    if (args.size < 1) {
+        LOG_WARN("win_close: expected 1 argument, got {}", args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+
+    m_windows.erase(grid_id);
+    m_grids.erase(grid_id);
+
+    // If the closed grid was the current grid, fall back to grid 1
+    if (m_current_grid == grid_id) {
+        m_current_grid = 1;
+    }
+
+    LOG_TRACE("win_close: grid={}", grid_id);
+}
+
+void NvimWidget::_redraw_win_viewport(msgpack::object_array& args) {
+    // ["win_viewport", grid, win, topline, botline, curline, curcol,
+    //   line_count, scroll_delta]
+    if (args.size < 8) {
+        LOG_WARN("win_viewport: expected 8 arguments, got {}", args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+    int topline = static_cast<int>(args.ptr[2].as<int64_t>());
+    int botline = static_cast<int>(args.ptr[3].as<int64_t>());
+    int curline = static_cast<int>(args.ptr[4].as<int64_t>());
+    int curcol = static_cast<int>(args.ptr[5].as<int64_t>());
+    int line_count = static_cast<int>(args.ptr[6].as<int64_t>());
+    int64_t scroll_delta = args.ptr[7].as<int64_t>();
+
+    auto win_it = m_windows.find(grid_id);
+    if (win_it != m_windows.end()) {
+        auto& info = win_it->second;
+        info.topline = topline;
+        info.botline = botline;
+        info.curline = curline;
+        info.curcol = curcol;
+        info.line_count = line_count;
+        info.scroll_delta = scroll_delta;
+    } else {
+        // WindowInfo not yet created — store in a default entry
+        auto& info = m_windows[grid_id];
+        info.grid_id = grid_id;
+        info.topline = topline;
+        info.botline = botline;
+        info.curline = curline;
+        info.curcol = curcol;
+        info.line_count = line_count;
+        info.scroll_delta = scroll_delta;
+    }
+
+    LOG_TRACE("win_viewport: grid={} topline={} botline={} cur=({},{}) "
+              "line_count={} scroll_delta={}",
+              grid_id, topline, botline, curline, curcol, line_count,
+              scroll_delta);
+}
+
+void NvimWidget::_redraw_win_viewport_margins(msgpack::object_array& args) {
+    // ["win_viewport_margins", grid, win, top, bottom, left, right]
+    if (args.size < 6) {
+        LOG_WARN("win_viewport_margins: expected 6 arguments, got {}",
+                 args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+    int top = static_cast<int>(args.ptr[2].as<int64_t>());
+    int bottom = static_cast<int>(args.ptr[3].as<int64_t>());
+    int left = static_cast<int>(args.ptr[4].as<int64_t>());
+    int right = static_cast<int>(args.ptr[5].as<int64_t>());
+
+    auto& info = m_windows[grid_id];
+    info.grid_id = grid_id;
+    info.margin_top = top;
+    info.margin_bottom = bottom;
+    info.margin_left = left;
+    info.margin_right = right;
+
+    LOG_TRACE("win_viewport_margins: grid={} margins=({},{},{},{})", grid_id,
+              top, bottom, left, right);
+}
+
+void NvimWidget::_redraw_win_extmark(msgpack::object_array& args) {
+    // ["win_extmark", grid, win, ns_id, mark_id, row, col]
+    if (args.size < 6) {
+        LOG_WARN("win_extmark: expected 6 arguments, got {}", args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+    int ns_id = static_cast<int>(args.ptr[2].as<int64_t>());
+    int mark_id = static_cast<int>(args.ptr[3].as<int64_t>());
+    int row = static_cast<int>(args.ptr[4].as<int64_t>());
+    int col = static_cast<int>(args.ptr[5].as<int64_t>());
+
+    LOG_TRACE("win_extmark: grid={} ns_id={} mark_id={} pos=({},{})", grid_id,
+              ns_id, mark_id, row, col);
+}
+
+void NvimWidget::_redraw_msg_set_pos(msgpack::object_array& args) {
+    // ["msg_set_pos", grid, row, scrolled, sep_char, zindex, compindex]
+    if (args.size < 6) {
+        LOG_WARN("msg_set_pos: expected 6 arguments, got {}", args.size);
+        return;
+    }
+
+    uint32_t grid_id = static_cast<uint32_t>(args.ptr[0].as<int64_t>());
+    int row = static_cast<int>(args.ptr[1].as<int64_t>());
+    bool scrolled = args.ptr[2].as<bool>();
+    std::string sep_char = args.ptr[3].as<std::string>();
+    int zindex = static_cast<int>(args.ptr[4].as<int64_t>());
+    int compindex = static_cast<int>(args.ptr[5].as<int64_t>());
+
+    // Store message grid positioning info
+    auto& info = m_windows[grid_id];
+    info.grid_id = grid_id;
+    info.visible = true;
+    info.floating = true;
+    info.start_row = row;
+    info.start_col = 0;
+    info.zindex = zindex;
+    info.compindex = compindex;
+
+    auto grid_it = m_grids.find(grid_id);
+    if (grid_it != m_grids.end()) {
+        grid_it->second.visible = true;
+        grid_it->second.compindex = compindex;
+        info.width = static_cast<int>(grid_it->second.width);
+        info.height = static_cast<int>(grid_it->second.height);
+    }
+
+    LOG_TRACE("msg_set_pos: grid={} row={} scrolled={} sep='{}' "
+              "zidx={} comp={}",
+              grid_id, row, scrolled, sep_char, zindex, compindex);
 }
 
 // --- Cmdline event handlers (ext_cmdline) ---
@@ -3457,30 +3887,88 @@ void NvimWidget::_handle_mouse_input() {
         return;
     }
 
-    auto it = m_grids.find(m_current_grid);
-    if (it == m_grids.end()) {
-        return;
-    }
-    const Grid& grid = it->second;
-
     ImVec2 grid_pos = ImGui::GetCursorScreenPos();
     float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
     float line_height = ImGui::GetTextLineHeight();
     float eff_line_h = line_height + static_cast<float>(m_linespace);
 
     ImGuiIO& io = ImGui::GetIO();
-    int col = static_cast<int>((io.MousePos.x - grid_pos.x) / char_width);
-    int row = static_cast<int>((io.MousePos.y - grid_pos.y) / eff_line_h);
+
+    // Find which visible grid the mouse is over (reverse compositing order —
+    // check topmost grids first)
+    uint32_t target_grid = m_current_grid;
+    const Grid* grid_ptr = nullptr;
+    float origin_x = grid_pos.x;
+    float origin_y = grid_pos.y;
+
+    if (m_multigrid_enabled) {
+        auto layers = _collect_visible_layers();
+
+        // Iterate in reverse (topmost first)
+        for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
+            uint32_t grid_id = *it;
+            auto grid_it = m_grids.find(grid_id);
+            if (grid_it == m_grids.end() || !grid_it->second.visible) {
+                continue;
+            }
+
+            // Check mouse_enabled for floating windows
+            auto win_it = m_windows.find(grid_id);
+            if (win_it != m_windows.end() && win_it->second.floating &&
+                !win_it->second.mouse_enabled) {
+                continue;
+            }
+
+            // Compute grid origin
+            float gx = grid_pos.x;
+            float gy = grid_pos.y;
+            if (win_it != m_windows.end()) {
+                if (win_it->second.floating) {
+                    gx = grid_pos.x + win_it->second.start_col * char_width;
+                    gy = grid_pos.y + win_it->second.start_row * eff_line_h;
+                } else if (grid_id != 1) {
+                    gx = grid_pos.x + win_it->second.start_col * char_width;
+                    gy = grid_pos.y + win_it->second.start_row * eff_line_h;
+                }
+            }
+
+            float grid_right = gx + grid_it->second.width * char_width;
+            float grid_bot = gy + grid_it->second.height * eff_line_h;
+
+            if (io.MousePos.x >= gx && io.MousePos.x < grid_right &&
+                io.MousePos.y >= gy && io.MousePos.y < grid_bot) {
+                target_grid = grid_id;
+                grid_ptr = &grid_it->second;
+                origin_x = gx;
+                origin_y = gy;
+                break;
+            }
+        }
+    }
+
+    // Fallback: use current grid
+    if (!grid_ptr) {
+        auto it = m_grids.find(target_grid);
+        if (it == m_grids.end()) {
+            return;
+        }
+        grid_ptr = &it->second;
+    }
+
+    const Grid& grid = *grid_ptr;
 
     // Bail if mouse is outside the grid rect
-    if (io.MousePos.x < grid_pos.x || io.MousePos.y < grid_pos.y) {
+    if (io.MousePos.x < origin_x || io.MousePos.y < origin_y) {
         return;
     }
-    float grid_right = grid_pos.x + grid.width * char_width;
-    float grid_bot = grid_pos.y + grid.height * eff_line_h;
+    float grid_right = origin_x + grid.width * char_width;
+    float grid_bot = origin_y + grid.height * eff_line_h;
     if (io.MousePos.x >= grid_right || io.MousePos.y >= grid_bot) {
         return;
     }
+
+    int col = static_cast<int>((io.MousePos.x - origin_x) / char_width);
+    int row = static_cast<int>((io.MousePos.y - origin_y) / eff_line_h);
 
     col = std::clamp(col, 0, static_cast<int>(grid.width) - 1);
     row = std::clamp(row, 0, static_cast<int>(grid.height) - 1);

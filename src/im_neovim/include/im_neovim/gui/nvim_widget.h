@@ -154,6 +154,16 @@ class NvimWidget : public TextWidget,
     void _redraw_hl_attr_define(msgpack::object_array& args);
     void _redraw_hl_group_set(msgpack::object_array& args);
 
+    /* Window positioning handlers (ext_multigrid) */
+    void _redraw_win_pos(msgpack::object_array& args);
+    void _redraw_win_float_pos(msgpack::object_array& args);
+    void _redraw_win_hide(msgpack::object_array& args);
+    void _redraw_win_close(msgpack::object_array& args);
+    void _redraw_win_viewport(msgpack::object_array& args);
+    void _redraw_win_viewport_margins(msgpack::object_array& args);
+    void _redraw_win_extmark(msgpack::object_array& args);
+    void _redraw_msg_set_pos(msgpack::object_array& args);
+
     /* Cmdline event handlers */
     void _cmdline_show(msgpack::object_array& args);
     void _cmdline_hide(msgpack::object_array& args);
@@ -232,12 +242,53 @@ class NvimWidget : public TextWidget,
         uint32_t height;
         std::vector<std::vector<ScreenCell>> cells;
         ScrollRegion m_scroll_region;
+        bool visible{true};
+        int compindex{0};
 
         Grid();
         void clear();
         void resize(uint32_t w, uint32_t h);
         void scroll_region(int count);
     };
+
+    // Per-window state tracked from win_pos / win_float_pos events.
+    struct WindowInfo {
+        uint32_t grid_id{0};
+        uint64_t window_handle{0};
+        bool visible{false};
+        bool floating{false};
+        int start_row{0};
+        int start_col{0};
+        int width{0};
+        int height{0};
+        // Floating-specific
+        std::string anchor;
+        int anchor_grid{1};
+        float anchor_row{0.0f};
+        float anchor_col{0.0f};
+        bool mouse_enabled{false};
+        int zindex{0};
+        int compindex{0};
+        // Viewport (buffer-space coordinates, 0-based)
+        int topline{0};
+        int botline{0};
+        int curline{0};
+        int curcol{0};
+        int line_count{0};
+        int64_t scroll_delta{0};
+        // Viewport margins (winbar, float borders, etc.)
+        int margin_top{0};
+        int margin_bottom{0};
+        int margin_left{0};
+        int margin_right{0};
+    };
+
+    /* Composited multi-grid rendering helpers */
+    void _render_grid_layer(ImDrawList* draw_list, const Grid& grid,
+                            const ImVec2& origin, float char_width,
+                            float line_height, bool render_cursor);
+    // Collects visible grid IDs sorted by compositing order for rendering.
+    std::vector<uint32_t> _collect_visible_layers() const;
 
     struct NvimState {
         uint32_t cursor_x{0};
@@ -290,6 +341,7 @@ class NvimWidget : public TextWidget,
 
     // Grid and highlight state
     std::unordered_map<uint32_t, Grid> m_grids;
+    std::unordered_map<uint32_t, WindowInfo> m_windows;
     uint32_t m_current_grid{1};
     std::unordered_map<int, HighlightAttr> m_hl_attrs;
     HighlightAttr m_current_hl;
