@@ -6,6 +6,10 @@
 #include <imgui.h>
 #include <tinyfiledialogs.h>
 
+#ifdef IM_APP_DARWIN
+#include "im_neovim/platforms/darwin_menu_bridge.h"
+#endif
+
 namespace ImNeovim {
 LayerMainWindow::LayerMainWindow() {
     m_terminal = std::make_shared<Terminal>();
@@ -109,6 +113,36 @@ void LayerMainWindow::on_attach() {
                 }
             });
     }
+
+    // On macOS, wire up the native menu bar so it emits the same dock
+    // layout signals that the ImGui menu bar uses on other platforms.
+#ifdef IM_APP_DARWIN
+    {
+        ImNeovim::darwin_setup_native_menus();
+
+        std::weak_ptr<DockSpaceLayout> weak_dock{m_dock_layout};
+        ImNeovim::g_native_on_open_folder.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->on_open_folder.emit();
+            }
+        });
+        ImNeovim::g_native_on_about.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->on_about.emit();
+            }
+        });
+        ImNeovim::g_native_on_reset_layout.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->queue_reset();
+            }
+        });
+        ImNeovim::g_native_on_exit.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->on_exit.emit();
+            }
+        });
+    }
+#endif
 }
 
 void LayerMainWindow::on_imgui_render() {

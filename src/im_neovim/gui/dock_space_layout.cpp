@@ -56,10 +56,13 @@ void DockSpaceLayout::render() {
     // We use NoDocking to prevent this window itself from being docked
     // and NoNavFocus to prevent it from stealing focus
     ImGuiWindowFlags window_flags =
-        ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking |
-        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBringToFrontOnFocus;
+#ifndef IM_APP_DARWIN
+        ImGuiWindowFlags_MenuBar |
+#endif
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoBringToFrontOnFocus;
 
     // Set the window to fill the entire main viewport
     const ImVec2 viewport_pos = m_main_viewport->WorkPos;
@@ -74,7 +77,8 @@ void DockSpaceLayout::render() {
     ImGui::Begin(g_dockspace_window_name, nullptr, window_flags);
     ImGui::PopStyleVar();
 
-    // Render menu bar
+    // Render menu bar (macOS uses native menus instead)
+#ifndef IM_APP_DARWIN
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open Folder...")) {
@@ -101,6 +105,7 @@ void DockSpaceLayout::render() {
         }
         ImGui::EndMenuBar();
     }
+#endif
 
     // Create the actual dockspace
     // ImGuiDockNodeFlags_PassthruCentralNode allows the dockspace to be

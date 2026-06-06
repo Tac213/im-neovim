@@ -87,6 +87,16 @@ class DockSpaceLayout {
      */
     void clear_reset_pending() { m_pending_reset = false; }
 
+    /**
+     * @brief Queues a layout reset for after the current frame.
+     *
+     * Unlike reset_to_default() which calls ImGui dock builder APIs
+     * immediately, this is safe to call from outside the ImGui render
+     * phase (e.g. from a native menu action). The reset is performed
+     * in the next render call.
+     */
+    void queue_reset() { m_pending_reset = true; }
+
     // -- Menu action signals (connected by LayerMainWindow) --
 
     /// Emitted when File > Open Folder is clicked.
@@ -97,6 +107,9 @@ class DockSpaceLayout {
 
     /// Emitted when Help > About is clicked.
     Signal<> on_about;
+
+    /// Emitted when View > Reset Layout is clicked.
+    Signal<> on_reset_layout;
 
   private:
     bool m_initialized{false};

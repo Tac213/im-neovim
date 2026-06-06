@@ -349,6 +349,10 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
         MACOSX_BUNDLE_ICON_FILE "nvim.icns"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/assets/Info.plist"
     )
+    target_sources(imnvim PRIVATE
+        "${im_neovim_dir}/platforms/darwin_menu_bridge.mm"
+        "${im_neovim_private_header_dir}/im_neovim/platforms/darwin_menu_bridge.h"
+    )
     set(icon_file "${CMAKE_CURRENT_SOURCE_DIR}/assets/nvim.icns")
     target_sources(imnvim PRIVATE "${icon_file}")
     set_source_files_properties("${icon_file}" PROPERTIES

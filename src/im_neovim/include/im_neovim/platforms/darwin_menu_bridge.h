@@ -1,0 +1,27 @@
+#pragma once
+
+#include "im_neovim/signal.h"
+
+namespace ImNeovim {
+
+// Global signals for native macOS menu actions.
+// Connected by LayerMainWindow::on_attach() on Darwin.
+
+/// File > Open Folder... (Cmd+O)
+extern Signal<> g_native_on_open_folder;
+
+/// App menu > About ImNeovim  (replaces orderFrontStandardAboutPanel:)
+extern Signal<> g_native_on_about;
+
+/// View > Reset Layout
+extern Signal<> g_native_on_reset_layout;
+
+/// File > Close Window (Cmd+W) / App menu > Quit
+extern Signal<> g_native_on_exit;
+
+/// Modify GLFW's default NSMenu bar to match ImNeovim's menu structure
+/// and replace the standard About panel with the custom one.
+/// Must be called after glfwInit() and before the main loop.
+void darwin_setup_native_menus();
+
+} // namespace ImNeovim
