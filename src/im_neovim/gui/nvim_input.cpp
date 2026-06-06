@@ -217,7 +217,7 @@ std::string collect_input(const ImGuiIO& io, ImGuiKey consumed_key) noexcept {
     // Ctrl+^ (Ctrl+6): toggle-input-method key.
     // ImGuiKey_6 is not in s_special_keys; handle it here so Pass 2 can
     // skip any corresponding character. Matching neovim-qt input.cpp.
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_6, false)) {
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_6, true)) {
         result += "<C-^>";
         int idx_6 = ImGuiKey_6 - ImGuiKey_NamedKey_BEGIN;
         if (idx_6 >= 0 && idx_6 < ImGuiKey_NamedKey_COUNT) {
@@ -228,7 +228,7 @@ std::string collect_input(const ImGuiIO& io, ImGuiKey consumed_key) noexcept {
     // Pass 1: Special keys via ImGui::IsKeyPressed
     for (size_t i = 0; i < g_special_keys_count; i++) {
         ImGuiKey key = g_special_keys[i].imgui_key;
-        if (ImGui::IsKeyPressed(key, false)) {
+        if (ImGui::IsKeyPressed(key, true)) {
             int idx = key - ImGuiKey_NamedKey_BEGIN;
             if (idx >= 0 && idx < ImGuiKey_NamedKey_COUNT && key_handled[idx]) {
                 continue;
@@ -317,7 +317,7 @@ std::string collect_input(const ImGuiIO& io, ImGuiKey consumed_key) noexcept {
             } else if (c == '=') {
                 kp = ImGuiKey_KeypadEqual;
             }
-            if (kp != ImGuiKey_None && ImGui::IsKeyPressed(kp, false)) {
+            if (kp != ImGuiKey_None && ImGui::IsKeyPressed(kp, true)) {
                 int kp_idx = kp - ImGuiKey_NamedKey_BEGIN;
                 if (kp_idx >= 0 && kp_idx < ImGuiKey_NamedKey_COUNT) {
                     key_handled[kp_idx] = true;
@@ -365,7 +365,7 @@ std::string collect_input(const ImGuiIO& io, ImGuiKey consumed_key) noexcept {
             ImGuiKey key = static_cast<ImGuiKey>(ImGuiKey_A + i);
             int idx = key - ImGuiKey_NamedKey_BEGIN;
             if (idx >= 0 && idx < ImGuiKey_NamedKey_COUNT &&
-                !key_handled[idx] && ImGui::IsKeyPressed(key, false)) {
+                !key_handled[idx] && ImGui::IsKeyPressed(key, true)) {
                 result += '<';
                 result += mods;
                 result += static_cast<char>('a' + i);
