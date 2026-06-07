@@ -1,5 +1,6 @@
 #include "layer_main_window.h"
 #include "im_neovim/logging.h"
+#include "layer_instance_manager.h"
 #include <algorithm>
 #include <im_app/application.h>
 #include <im_app/file_system.h>
@@ -54,8 +55,10 @@ void LayerMainWindow::on_attach() {
         // File > Open Folder...
         std::weak_ptr<FileTreeWidget> weak_file_tree{m_file_tree};
         std::weak_ptr<NvimWidget> weak_nvim_for_cd{m_nvim};
+        std::weak_ptr<LayerInstanceManager> weak_instance_mgr{
+            m_instance_manager};
         m_dock_layout->on_open_folder.connect(
-            [weak_file_tree, weak_nvim_for_cd]() {
+            [weak_file_tree, weak_nvim_for_cd, weak_instance_mgr]() {
                 auto file_tree = weak_file_tree.lock();
                 if (!file_tree) {
                     return;
@@ -82,6 +85,16 @@ void LayerMainWindow::on_attach() {
                 }
                 std::filesystem::path selected_path{selected};
 #endif
+
+                // Rebind the instance lock to the new folder.
+                if (auto instance_mgr = weak_instance_mgr.lock()) {
+                    if (!instance_mgr->change_folder(selected_path)) {
+                        // Another instance already owns this folder — an
+                        // activate message was already sent to it. Simply
+                        // stay on the current folder.
+                        return;
+                    }
+                }
 
                 // Update the file tree.
                 file_tree->set_current_directory(selected_path);

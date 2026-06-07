@@ -30,6 +30,12 @@ class LayerInstanceManager : public ImApp::Layer {
     /// (create_im_app) should return nullptr and exit immediately.
     bool is_primary() const { return m_is_primary; }
 
+    /// Release the current instance lock and IPC binding, then acquire
+    /// new ones keyed to `new_path`. Returns false if another instance
+    /// already owns `new_path` (in which case an activate message is
+    /// sent to that instance). Returns true on success.
+    bool change_folder(const std::filesystem::path& new_path);
+
     /// Derive a unique key from a folder path (hashed absolute path).
     static std::string derive_key(const std::filesystem::path& path);
 

@@ -80,7 +80,26 @@ void Win32Window::activate() {
     if (::IsIconic(m_hwnd)) {
         ::ShowWindow(m_hwnd, SW_RESTORE);
     }
+
+    // Attach our input queue to the foreground thread so
+    // SetForegroundWindow works even when another application
+    // currently owns the foreground.
+    HWND foreground_wnd = ::GetForegroundWindow();
+    DWORD foreground_tid = ::GetWindowThreadProcessId(foreground_wnd, nullptr);
+    DWORD current_tid = ::GetCurrentThreadId();
+
+    bool attached = false;
+    if (foreground_tid != 0 && foreground_tid != current_tid) {
+        ::AttachThreadInput(current_tid, foreground_tid, TRUE);
+        attached = true;
+    }
+
+    ::BringWindowToTop(m_hwnd);
     ::SetForegroundWindow(m_hwnd);
+
+    if (attached) {
+        ::AttachThreadInput(current_tid, foreground_tid, FALSE);
+    }
 }
 
 void Win32Window::set_titlebar_hovered(bool hovered) {

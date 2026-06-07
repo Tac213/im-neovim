@@ -10,6 +10,8 @@
 #include <memory>
 
 namespace ImNeovim {
+class LayerInstanceManager;
+
 class LayerMainWindow : public ImApp::Layer {
   public:
     LayerMainWindow();
@@ -20,6 +22,11 @@ class LayerMainWindow : public ImApp::Layer {
 
     /// Blocks exit if nvim has unsaved buffers and shows a save modal.
     bool on_exit_requested() override;
+
+    /// Set the instance manager for per-folder single-instance locking.
+    void set_instance_manager(std::weak_ptr<LayerInstanceManager> mgr) {
+        m_instance_manager = std::move(mgr);
+    }
 
   private:
     std::shared_ptr<Terminal> m_terminal{nullptr};
@@ -32,6 +39,9 @@ class LayerMainWindow : public ImApp::Layer {
 
     // About panel
     AboutPanel m_about_panel;
+
+    // Per-folder single-instance manager (weak — owned by layer stack).
+    std::weak_ptr<LayerInstanceManager> m_instance_manager;
 
     void _show_exit_modal();
     void _render_exit_modal();

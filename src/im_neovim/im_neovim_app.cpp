@@ -73,6 +73,7 @@ Application* create_im_app(int argc, char** argv) {
     app->push_layer(instance_mgr);
 
     auto main_layer = std::make_shared<ImNeovim::LayerMainWindow>();
+    main_layer->set_instance_manager(instance_mgr);
     // Connect remote activate signal to window activation.
     instance_mgr->on_remote_activate.connect(
         []() { IM_APP.activate_window(); });

@@ -79,6 +79,52 @@ void LayerInstanceManager::on_detach() {
     }
 }
 
+bool LayerInstanceManager::change_folder(
+    const std::filesystem::path& new_path) {
+    std::string new_key = derive_key(new_path);
+
+    // No change.
+    if (new_key == m_instance_key) {
+        return true;
+    }
+
+    // Try to acquire the lock for the new folder before releasing the
+    // old one.  If another instance already owns the new folder, send
+    // it an activate message and report failure.
+    auto new_lock = ImApp::InstanceLock::create(new_key);
+    if (!new_lock->acquired()) {
+        auto ipc = ImApp::IpcChannel::create();
+        ipc->send_message(new_key, "");
+        LOG_INFO("Activating existing instance for folder: {}",
+                 new_path.string());
+        return false;
+    }
+
+    // Release old resources.
+    m_ipc.reset();
+    m_lock.reset();
+
+    // Take ownership of the new lock and update identity.
+    m_lock = std::move(new_lock);
+    m_instance_key = std::move(new_key);
+    m_folder_path = new_path;
+    m_is_primary = true;
+
+    // Re-bind IPC for the new key.
+    m_ipc = ImApp::IpcChannel::create();
+    if (!m_ipc->bind(m_instance_key)) {
+        LOG_ERROR("Failed to bind IPC channel for key: {}", m_instance_key);
+    } else {
+        m_ipc->set_message_handler([this](const std::string& message) {
+            _handle_ipc_message(message);
+        });
+        m_ipc->start_listening();
+        LOG_INFO("IPC listener started for folder: {}", m_folder_path.string());
+    }
+
+    return true;
+}
+
 void LayerInstanceManager::_handle_ipc_message(const std::string& /*message*/) {
     LOG_INFO("Received remote activate request for folder: {}",
              m_folder_path.string());
