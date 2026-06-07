@@ -37,7 +37,9 @@ LinuxInstanceLock::~LinuxInstanceLock() {
     if (m_lock_fd >= 0) {
         ::flock(m_lock_fd, LOCK_UN);
         ::close(m_lock_fd);
-        ::unlink(m_lock_path.c_str());
+        if (m_acquired) {
+            ::unlink(m_lock_path.c_str());
+        }
     }
 }
 

@@ -1,9 +1,11 @@
 #include "darwin_ipc_channel.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <poll.h>
 #include <spdlog/spdlog.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -14,7 +16,16 @@ DarwinIpcChannel::DarwinIpcChannel() = default;
 DarwinIpcChannel::~DarwinIpcChannel() { _close_all(); }
 
 bool DarwinIpcChannel::bind(const std::string& key) {
-    std::string addr_str = std::string("\0imapp_", 7) + key;
+    // Use filesystem-bound Unix socket (macOS does not support Linux-style
+    // abstract namespace sockets with '\0' prefix).
+    const char* tmp_dir = std::getenv("TMPDIR");
+    std::string dir =
+        tmp_dir != nullptr ? std::string(tmp_dir) + "imapp" : "/tmp/imapp";
+
+    // Ensure the directory exists (best-effort; InstanceLock also creates it).
+    ::mkdir(dir.c_str(), 0755);
+
+    m_socket_path = dir + "/ipc_" + key;
 
     m_server_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (m_server_fd < 0) {
@@ -22,16 +33,18 @@ bool DarwinIpcChannel::bind(const std::string& key) {
         return false;
     }
 
+    // Remove any stale socket file from a previous run.
+    ::unlink(m_socket_path.c_str());
+
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    std::memcpy(addr.sun_path, addr_str.c_str(), addr_str.size());
-
-    socklen_t addr_len = static_cast<socklen_t>(
-        offsetof(struct sockaddr_un, sun_path) + addr_str.size());
+    std::strncpy(addr.sun_path, m_socket_path.c_str(),
+                 sizeof(addr.sun_path) - 1);
 
     if (::bind(m_server_fd, reinterpret_cast<struct sockaddr*>(&addr),
-               addr_len) < 0) {
-        spdlog::error("[DarwinIpcChannel] Failed to bind socket");
+               sizeof(addr)) < 0) {
+        spdlog::error("[DarwinIpcChannel] Failed to bind socket: {}",
+                      m_socket_path);
         ::close(m_server_fd);
         m_server_fd = -1;
         return false;
@@ -58,7 +71,11 @@ void DarwinIpcChannel::start_listening() {
 
 bool DarwinIpcChannel::send_message(const std::string& key,
                                     const std::string& message) {
-    std::string addr_str = std::string("\0imapp_", 7) + key;
+    // Use the same filesystem path as bind().
+    const char* tmp_dir = std::getenv("TMPDIR");
+    std::string dir =
+        tmp_dir != nullptr ? std::string(tmp_dir) + "imapp" : "/tmp/imapp";
+    std::string socket_path = dir + "/ipc_" + key;
 
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -67,17 +84,13 @@ bool DarwinIpcChannel::send_message(const std::string& key,
 
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    std::memcpy(addr.sun_path, addr_str.c_str(), addr_str.size());
+    std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
-    socklen_t addr_len = static_cast<socklen_t>(
-        offsetof(struct sockaddr_un, sun_path) + addr_str.size());
-
-    if (::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), addr_len) <
+    if (::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
         0) {
         ::close(fd);
         return false;
     }
-
     ::send(fd, message.c_str(), message.size(), 0);
     ::close(fd);
     return true;
@@ -95,6 +108,9 @@ void DarwinIpcChannel::_close_all() {
     }
     if (m_listen_thread.joinable()) {
         m_listen_thread.join();
+    }
+    if (!m_socket_path.empty()) {
+        ::unlink(m_socket_path.c_str());
     }
 }
 

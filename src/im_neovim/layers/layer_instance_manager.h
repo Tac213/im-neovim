@@ -1,6 +1,7 @@
 #pragma once
 
 #include "im_neovim/signal.h"
+#include <atomic>
 #include <filesystem>
 #include <im_app/layer.h>
 #include <memory>
@@ -39,6 +40,7 @@ class LayerInstanceManager : public ImApp::Layer {
     std::filesystem::path m_folder_path;
     std::string m_instance_key;
     bool m_is_primary{false};
+    std::atomic<bool> m_pending_activate{false};
     std::unique_ptr<ImApp::InstanceLock> m_lock;
     std::unique_ptr<ImApp::IpcChannel> m_ipc;
 

@@ -59,8 +59,15 @@ void LayerInstanceManager::on_attach() {
 }
 
 void LayerInstanceManager::on_update() {
-    // IPC is event-driven (Windows: window messages; Unix: libuv poll).
-    // No per-frame work needed.
+    // Check for a pending remote-activate request that arrived on the
+    // IPC background thread.  We must call activate_window() from the
+    // main thread because the platform window activation APIs (GLFW /
+    // Win32 / Metal) are not thread-safe.
+    if (m_pending_activate.exchange(false)) {
+        LOG_INFO("Processing deferred remote activate for folder: {}",
+                 m_folder_path.string());
+        on_remote_activate.emit();
+    }
 }
 
 void LayerInstanceManager::on_detach() {
@@ -75,7 +82,9 @@ void LayerInstanceManager::on_detach() {
 void LayerInstanceManager::_handle_ipc_message(const std::string& /*message*/) {
     LOG_INFO("Received remote activate request for folder: {}",
              m_folder_path.string());
-    on_remote_activate.emit();
+    // Set the flag — on_update() will emit on_remote_activate from the
+    // main thread, where GLFW / platform window calls are safe.
+    m_pending_activate.store(true);
 }
 
 } // namespace ImNeovim

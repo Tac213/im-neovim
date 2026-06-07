@@ -21,6 +21,7 @@ class DarwinIpcChannel : public IpcChannel {
 
   private:
     int m_server_fd{-1};
+    std::string m_socket_path;
     MessageHandler m_handler;
     std::thread m_listen_thread;
     std::atomic<bool> m_running{false};
