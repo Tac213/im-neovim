@@ -12,8 +12,8 @@ LinuxInstanceLock::LinuxInstanceLock(std::string key) : m_key(std::move(key)) {
     // Use $XDG_RUNTIME_DIR if available, otherwise /tmp.
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
     std::filesystem::path lock_dir =
-        runtime_dir != nullptr ? std::filesystem::path(runtime_dir) / "imnvim"
-                               : std::filesystem::path("/tmp") / "imnvim";
+        runtime_dir != nullptr ? std::filesystem::path(runtime_dir) / "imapp"
+                               : std::filesystem::path("/tmp") / "imapp";
 
     std::error_code ec;
     std::filesystem::create_directories(lock_dir, ec);

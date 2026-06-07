@@ -16,11 +16,13 @@
 #include <Windows.h>
 #elif defined(__APPLE__)
 #include <climits>
+#include <fcntl.h>
 #include <mach-o/dyld.h>
 #include <spawn.h>
 #include <unistd.h>
 #else
 #include <climits>
+#include <fcntl.h>
 #include <spawn.h>
 #include <unistd.h>
 #endif
@@ -103,13 +105,28 @@ bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
     return false;
 #else
     const char* argv[] = {imnvim_path.c_str(), nullptr};
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
+                                     O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null",
+                                     O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null",
+                                     O_WRONLY, 0);
+
     pid_t pid;
-    int rc = posix_spawn(&pid, imnvim_path.c_str(), nullptr, nullptr,
+    int rc = posix_spawn(&pid, imnvim_path.c_str(), &actions, &attr,
                          const_cast<char* const*>(argv), environ);
-    if (rc == 0) {
-        return true;
-    }
-    return false;
+
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
+
+    return rc == 0;
 #endif
 }
 

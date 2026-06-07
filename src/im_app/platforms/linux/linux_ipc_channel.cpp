@@ -1,6 +1,7 @@
 #include "linux_ipc_channel.h"
 
 #include <cstring>
+#include <poll.h>
 #include <spdlog/spdlog.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -90,7 +91,6 @@ void LinuxIpcChannel::set_message_handler(MessageHandler handler) {
 void LinuxIpcChannel::_close_all() {
     m_running = false;
     if (m_server_fd >= 0) {
-        ::shutdown(m_server_fd, SHUT_RDWR);
         ::close(m_server_fd);
         m_server_fd = -1;
     }
@@ -101,6 +101,21 @@ void LinuxIpcChannel::_close_all() {
 
 void LinuxIpcChannel::_listen_loop() {
     while (m_running) {
+        struct pollfd pfd;
+        pfd.fd = m_server_fd;
+        pfd.events = POLLIN;
+
+        int ret = ::poll(&pfd, 1, 100);
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (ret == 0) {
+            continue;
+        }
+
         int client_fd = ::accept(m_server_fd, nullptr, nullptr);
         if (client_fd < 0) {
             if (!m_running) {
@@ -111,7 +126,7 @@ void LinuxIpcChannel::_listen_loop() {
 
         char buffer[4096];
         ssize_t n = ::read(client_fd, buffer, sizeof(buffer) - 1);
-        if (n > 0) {
+        if (n >= 0) {
             buffer[n] = '\0';
             if (m_handler) {
                 m_handler(std::string(buffer, static_cast<size_t>(n)));

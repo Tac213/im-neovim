@@ -13,8 +13,8 @@ DarwinInstanceLock::DarwinInstanceLock(std::string key)
     // Use $TMPDIR if available, otherwise /tmp.
     const char* tmp_dir = std::getenv("TMPDIR");
     std::filesystem::path lock_dir =
-        tmp_dir != nullptr ? std::filesystem::path(tmp_dir) / "imnvim"
-                           : std::filesystem::path("/tmp") / "imnvim";
+        tmp_dir != nullptr ? std::filesystem::path(tmp_dir) / "imapp"
+                           : std::filesystem::path("/tmp") / "imapp";
 
     std::error_code ec;
     std::filesystem::create_directories(lock_dir, ec);
