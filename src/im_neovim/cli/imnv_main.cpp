@@ -112,6 +112,7 @@ bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addchdir_np(&actions, cwd.c_str());
     posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
                                      O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null",

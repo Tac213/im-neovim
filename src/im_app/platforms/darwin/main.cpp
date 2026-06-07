@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
 #if defined(IM_APP_DEBUG)
     glfwSetErrorCallback(glfw_error_callback);
 #endif
+    glfwInitHint(GLFW_COCOA_CHDIR_RESOURCES, GLFW_FALSE);
     if (!glfwInit()) {
         spdlog::error("Failed to initialize glfw!");
         return 1;
