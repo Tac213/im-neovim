@@ -42,6 +42,8 @@ set(im_app_public_files
     "${public_dir}/im_app/pty.h"
     "${public_dir}/im_app/font_manager.h"
     "${public_dir}/im_app/image_manager.h"
+    "${public_dir}/im_app/instance_lock.h"
+    "${public_dir}/im_app/ipc_channel.h"
 )
 
 set(im_app_private_files
@@ -54,6 +56,9 @@ set(im_app_private_files
 )
 
 set(im_app_platform_specific_files)
+
+# IPC platform files shared between im_app and imnv targets.
+set(im_ipc_files)
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     set(im_app_platform_dir "${im_app_dir}/platforms/win32")
@@ -76,6 +81,12 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
         "${im_app_platform_dir}/win32_pty.cpp"
         "${im_app_platform_dir}/win32_font_manager.cpp"
     )
+    list(APPEND im_ipc_files
+        "${im_app_platform_dir}/win32_instance_lock.h"
+        "${im_app_platform_dir}/win32_instance_lock.cpp"
+        "${im_app_platform_dir}/win32_ipc_channel.h"
+        "${im_app_platform_dir}/win32_ipc_channel.cpp"
+    )
 endif()
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
@@ -92,6 +103,12 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         "${im_app_platform_dir}/linux_pty.h"
         "${im_app_platform_dir}/linux_pty.cpp"
         "${im_app_platform_dir}/linux_font_manager.cpp"
+    )
+    list(APPEND im_ipc_files
+        "${im_app_platform_dir}/linux_instance_lock.h"
+        "${im_app_platform_dir}/linux_instance_lock.cpp"
+        "${im_app_platform_dir}/linux_ipc_channel.h"
+        "${im_app_platform_dir}/linux_ipc_channel.cpp"
     )
 endif()
 
@@ -112,12 +129,19 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
         "${im_app_platform_dir}/darwin_pty.cpp"
         "${im_app_platform_dir}/darwin_font_manager.mm"
     )
+    list(APPEND im_ipc_files
+        "${im_app_platform_dir}/darwin_instance_lock.h"
+        "${im_app_platform_dir}/darwin_instance_lock.cpp"
+        "${im_app_platform_dir}/darwin_ipc_channel.h"
+        "${im_app_platform_dir}/darwin_ipc_channel.cpp"
+    )
 endif()
 
 add_library(im_app STATIC
     ${im_app_public_files}
     ${im_app_private_files}
     ${im_app_platform_specific_files}
+    ${im_ipc_files}
 )
 add_library(ImApp::ImApp ALIAS im_app)
 
@@ -214,6 +238,8 @@ set(im_neovim_private_files
     "${im_neovim_dir}/layers/layer_libuv.cpp"
     "${im_neovim_dir}/layers/layer_main_window.h"
     "${im_neovim_dir}/layers/layer_main_window.cpp"
+    "${im_neovim_dir}/layers/layer_instance_manager.h"
+    "${im_neovim_dir}/layers/layer_instance_manager.cpp"
 )
 
 add_executable(imnvim
@@ -237,6 +263,20 @@ target_include_directories(
     ${im_neovim_private_header_dir}
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
+
+# -- imnv CLI launcher executable --
+add_executable(imnv
+    "${im_neovim_dir}/cli/imnv_main.cpp"
+    ${im_ipc_files}
+)
+target_link_libraries(imnv PRIVATE spdlog::spdlog)
+target_include_directories(imnv PRIVATE
+    "${public_dir}"
+)
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
+    target_link_libraries(imnv PRIVATE user32.lib)
+endif()
 
 # -- Generate build_config.h from template --
 set(BUILD_CONFIG_IN "${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_config.h.in")
@@ -369,6 +409,16 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
         COMMENT "Bundling Neovim into ImNeovim.app/Contents/Resources/..."
     )
 
+    # Copy the imnv CLI launcher into the .app bundle alongside imnvim
+    # so it can find and spawn imnvim at dev time without cmake --install.
+    add_custom_command(TARGET imnvim POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:imnv>"
+        "$<TARGET_BUNDLE_CONTENT_DIR:imnvim>/MacOS/"
+        COMMENT "Copying imnv into ImNeovim.app/Contents/MacOS/..."
+    )
+    add_dependencies(imnvim imnv)
+
     bundle_licenses_macos()
 endif()
 
@@ -412,6 +462,7 @@ endif()
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     # Main executable
     install(TARGETS imnvim RUNTIME DESTINATION .)
+    install(TARGETS imnv RUNTIME DESTINATION .)
 
     # MSVC runtime DLLs — compiler-provided runtime libraries are not part of
     # $<TARGET_RUNTIME_DLLS:...>, so use CMake's runtime-library helper.
@@ -440,6 +491,7 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Main executable
     install(TARGETS imnvim RUNTIME DESTINATION .)
+    install(TARGETS imnv RUNTIME DESTINATION .)
 
     # Bundled Neovim runtime (installed alongside the executable).
     # The app locates nvim at runtime via: <exe_dir>/nvim/bin/nvim
@@ -489,6 +541,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     # already copied into the bundle via POST_BUILD steps.  Only the
     # bundle itself needs to be installed.
     install(TARGETS imnvim BUNDLE DESTINATION .)
+
+    # Install imnv inside the .app bundle next to the imnvim binary so
+    # get_exe_dir() naturally finds it.
+    get_target_property(_imnvim_bundle_name imnvim MACOSX_BUNDLE_BUNDLE_NAME)
+    install(TARGETS imnv RUNTIME DESTINATION ${_imnvim_bundle_name}.app/Contents/MacOS)
 endif()
 
 # --- CPack configuration ---

@@ -3,6 +3,7 @@
 // clang-format on
 #include "im_neovim/logging.h"
 #include "imnvim_assets/imnvim_assets.h"
+#include "layers/layer_instance_manager.h"
 #include "layers/layer_libuv.h"
 #include <im_app/application.h>
 #include <im_app/file_system.h>
@@ -52,11 +53,30 @@ namespace ImApp {
 Application* create_im_app(int argc, char** argv) {
     IMNVIM_REGISTER_EMBEDDED_ASSETS();
 
+    // Use CWD as the folder.
+    auto folder = std::filesystem::current_path();
+
+    // Single-instance check per folder.
+    auto instance_mgr =
+        std::make_shared<ImNeovim::LayerInstanceManager>(folder);
+    if (!instance_mgr->is_primary()) {
+        // Another instance already owns this folder.
+        return nullptr;
+    }
+
     AppSpec app_spec{.name = "ImNeovim", .main_window_no_border = false};
     auto* app = new Application(app_spec);
     ImNeovim::initialize_logger();
+
     app->push_layer<ImNeovim::LayerLibuv>();
-    app->push_layer<ImNeovim::LayerMainWindow>();
+    app->push_layer(instance_mgr);
+
+    auto main_layer = std::make_shared<ImNeovim::LayerMainWindow>();
+    // Connect remote activate signal to window activation.
+    instance_mgr->on_remote_activate.connect(
+        []() { IM_APP.activate_window(); });
+    app->push_layer(main_layer);
+
     return app;
 }
 } // namespace ImApp

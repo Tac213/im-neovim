@@ -76,6 +76,13 @@ void Win32Window::on_update() {
 
 void Win32Window::minimize() { ::ShowWindow(m_hwnd, SW_MINIMIZE); }
 
+void Win32Window::activate() {
+    if (::IsIconic(m_hwnd)) {
+        ::ShowWindow(m_hwnd, SW_RESTORE);
+    }
+    ::SetForegroundWindow(m_hwnd);
+}
+
 void Win32Window::set_titlebar_hovered(bool hovered) {
     m_is_titlebar_hovered = hovered;
 }

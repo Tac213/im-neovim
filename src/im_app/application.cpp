@@ -68,6 +68,12 @@ int Application::exec() {
 
 void Application::exit() { m_is_running = false; }
 
+void Application::activate_window() {
+    if (m_window) {
+        m_window->activate();
+    }
+}
+
 void Application::request_exit() { m_exit_requested = true; }
 
 void Application::cancel_exit() { m_exit_requested = false; }

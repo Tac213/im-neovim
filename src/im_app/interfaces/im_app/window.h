@@ -21,6 +21,7 @@ class Window {
     virtual ~Window() = default;
     virtual void on_update() = 0;
     virtual void minimize() = 0;
+    virtual void activate() = 0;
     virtual void set_titlebar_hovered(bool hovered) = 0;
     virtual uint32_t get_width() const = 0;
     virtual uint32_t get_height() const = 0;

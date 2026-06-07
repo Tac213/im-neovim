@@ -11,6 +11,7 @@ class GlfwWindow : public Window {
     virtual ~GlfwWindow() override;
     virtual void on_update() override;
     virtual void minimize() override;
+    virtual void activate() override;
     virtual void set_titlebar_hovered(bool hovered) override;
     virtual uint32_t get_width() const override;
     virtual uint32_t get_height() const override;

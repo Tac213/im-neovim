@@ -30,6 +30,13 @@ void GlfwWindow::minimize() {
     }
 }
 
+void GlfwWindow::activate() {
+    if (m_window) {
+        glfwShowWindow(m_window);
+        glfwFocusWindow(m_window);
+    }
+}
+
 void GlfwWindow::set_titlebar_hovered(bool hovered) {}
 
 uint32_t GlfwWindow::get_width() const {

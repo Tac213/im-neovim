@@ -66,6 +66,9 @@ class Application {
         return m_graphics_context;
     }
 
+    /// Bring the main window to the foreground, restoring if minimized.
+    void activate_window();
+
     /// Human-readable name of the active graphics backend (e.g. "DirectX 12").
     /// Returns "Unknown" if the graphics context is not yet initialized.
     const char* get_backend_name() const;

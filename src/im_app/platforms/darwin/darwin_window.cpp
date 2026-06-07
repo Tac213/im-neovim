@@ -29,6 +29,13 @@ void DarwinWindow::minimize() {
     }
 }
 
+void DarwinWindow::activate() {
+    if (m_window) {
+        glfwShowWindow(m_window);
+        glfwFocusWindow(m_window);
+    }
+}
+
 void DarwinWindow::set_titlebar_hovered(bool hovered) {}
 
 uint32_t DarwinWindow::get_width() const {
