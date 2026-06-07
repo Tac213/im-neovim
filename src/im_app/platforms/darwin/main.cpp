@@ -18,6 +18,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     auto* app = ImApp::create_im_app(argc, argv);
+    if (!app) {
+        return 0;
+    }
     auto returncode = app->exec();
     delete app;
     glfwTerminate();

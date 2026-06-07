@@ -51,7 +51,7 @@ static void initialize_logger() {
 
 namespace ImApp {
 Application* create_im_app(int argc, char** argv) {
-    IMNVIM_REGISTER_EMBEDDED_ASSETS();
+    ImNeovim::initialize_logger();
 
     // Use CWD as the folder.
     auto folder = std::filesystem::current_path();
@@ -64,9 +64,10 @@ Application* create_im_app(int argc, char** argv) {
         return nullptr;
     }
 
+    IMNVIM_REGISTER_EMBEDDED_ASSETS();
+
     AppSpec app_spec{.name = "ImNeovim", .main_window_no_border = false};
     auto* app = new Application(app_spec);
-    ImNeovim::initialize_logger();
 
     app->push_layer<ImNeovim::LayerLibuv>();
     app->push_layer(instance_mgr);

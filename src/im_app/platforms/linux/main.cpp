@@ -18,6 +18,9 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
     auto* app = ImApp::create_im_app(argc, argv);
+    if (!app) {
+        return 0;
+    }
     auto returncode = app->exec();
     delete app;
     glfwTerminate();

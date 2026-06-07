@@ -58,6 +58,9 @@ int main()
     utf8_argv.push_back(nullptr); // argv terminator
 
     auto* app = ImApp::create_im_app(argc, utf8_argv.data());
+    if (!app) {
+        return 0;
+    }
     auto returncode = app->exec();
     delete app;
 
