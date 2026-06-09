@@ -38,7 +38,7 @@ class LayerMainWindow : public ImApp::Layer {
     bool m_exit_modal_active{false};
 
     // About panel
-    AboutPanel m_about_panel;
+    std::shared_ptr<AboutPanel> m_about_panel;
 
     // Per-folder single-instance manager (weak — owned by layer stack).
     std::weak_ptr<LayerInstanceManager> m_instance_manager;

@@ -157,15 +157,12 @@ void NvimWidget::Grid::scroll_region(int count) {
     }
 }
 
-NvimWidget::NvimWidget(std::filesystem::path initial_cwd) {
+NvimWidget::NvimWidget() {
     m_window_title = "nvim (no file)";
     m_window_icon.clear();
 
-    if (initial_cwd.empty()) {
-        m_nvim_cwd = ImApp::path_to_string(std::filesystem::current_path());
-    } else {
-        m_nvim_cwd = ImApp::path_to_string(initial_cwd);
-    }
+    // Use the first workspace folder (or home directory if empty).
+    m_nvim_cwd = ImApp::path_to_string(g_workspace.first_folder_or_home());
 
     // Initialize with safe default size
     m_state.row = 24;

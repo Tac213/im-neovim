@@ -1,6 +1,7 @@
 // clang-format off
 #include "layers/layer_main_window.h"
 // clang-format on
+#include "im_neovim/globals.h"
 #include "im_neovim/logging.h"
 #include "imnvim_assets/imnvim_assets.h"
 #include "layers/layer_instance_manager.h"
@@ -53,14 +54,38 @@ namespace ImApp {
 Application* create_im_app(int argc, char** argv) {
     ImNeovim::initialize_logger();
 
-    // Use CWD as the folder.
-    auto folder = std::filesystem::current_path();
+    // Parse argv[1..] for workspace folders.
+    // Each argument is split on the platform path separator so both
+    //   imnvim C:\foo;C:\bar   (Windows, manual invocation)
+    //   imnvim /a:/b           (Unix, manual invocation)
+    // and direct per-argument passing from the imnv launcher work.
+#ifdef IM_APP_WIN32
+    constexpr char path_sep = ';';
+#else
+    constexpr char path_sep = ':';
+#endif
 
-    // Single-instance check per folder.
-    auto instance_mgr =
-        std::make_shared<ImNeovim::LayerInstanceManager>(folder);
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg{argv[i]};
+        size_t start = 0;
+        while (start < arg.size()) {
+            auto end = arg.find(path_sep, start);
+            if (end == std::string_view::npos) {
+                end = arg.size();
+            }
+            if (end > start) {
+                auto token = arg.substr(start, end - start);
+                std::filesystem::path p{token};
+                ImNeovim::g_workspace.add_folder(p);
+            }
+            start = end + 1;
+        }
+    }
+
+    // Single-instance check keyed to the entire workspace.
+    auto instance_mgr = std::make_shared<ImNeovim::LayerInstanceManager>();
     if (!instance_mgr->is_primary()) {
-        // Another instance already owns this folder.
+        // Another instance already owns this workspace.
         return nullptr;
     }
 

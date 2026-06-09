@@ -1,9 +1,11 @@
 #include "layer_main_window.h"
+#include "im_neovim/globals.h"
 #include "im_neovim/logging.h"
 #include "layer_instance_manager.h"
 #include <algorithm>
 #include <im_app/application.h>
 #include <im_app/file_system.h>
+#include <im_app/ipc_channel.h>
 #include <imgui.h>
 #include <tinyfiledialogs.h>
 
@@ -15,10 +17,12 @@ namespace ImNeovim {
 LayerMainWindow::LayerMainWindow() {
     m_terminal = std::make_shared<Terminal>();
     m_file_tree = std::make_shared<FileTreeWidget>();
-    m_nvim = std::make_shared<NvimWidget>(m_file_tree->current_directory());
+    m_nvim = std::make_shared<NvimWidget>();
 
     // Create the dock layout manager
     m_dock_layout = std::make_shared<DockSpaceLayout>();
+
+    m_about_panel = std::make_shared<AboutPanel>();
 }
 
 void LayerMainWindow::on_update() {
@@ -44,87 +48,130 @@ void LayerMainWindow::on_attach() {
             });
     }
 
+    // Helper: open a folder picker and add the selected folder to the
+    // workspace.  Used by both the menu action and the empty-state
+    // button in the file tree.
+    auto add_folder_dialog = []() {
+#ifdef IM_APP_WIN32
+        // Start the dialog at the first workspace folder (or home).
+        std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+        const wchar_t* selected_w = tinyfd_selectFolderDialogW(
+            L"Add Folder to Workspace", start_dir.c_str());
+        if (selected_w == nullptr) {
+            return; // User cancelled
+        }
+        std::filesystem::path selected_path{selected_w};
+#else
+        std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+        std::string start_str = ImApp::path_to_string(start_dir);
+        const char* selected = tinyfd_selectFolderDialog(
+            "Add Folder to Workspace", start_str.c_str());
+        if (selected == nullptr) {
+            return; // User cancelled
+        }
+        std::filesystem::path selected_path{selected};
+#endif
+        g_workspace.add_folder(selected_path);
+    };
+
+    // File tree signals.
+    if (m_file_tree) {
+        // Empty-state "Open Folder" button.
+        m_file_tree->on_open_folder_requested.connect(add_folder_dialog);
+
+        // Right-click "Remove Folder from Workspace".
+        m_file_tree->on_remove_folder_requested.connect(
+            [](const std::filesystem::path& path) {
+                g_workspace.remove_folder(path);
+            });
+    }
+
     // Connect menu action signals from the dock layout.
     if (m_dock_layout) {
         // File > Exit
         m_dock_layout->on_exit.connect([]() { IM_APP.request_exit(); });
 
         // Help > About
-        m_dock_layout->on_about.connect([this]() { m_about_panel.show(); });
+        std::weak_ptr<AboutPanel> weak_about_panel{m_about_panel};
+        m_dock_layout->on_about.connect([weak_about_panel]() {
+            if (auto about_panel = weak_about_panel.lock()) {
+                about_panel->show();
+            }
+        });
 
-        // File > Open Folder...
-        std::weak_ptr<FileTreeWidget> weak_file_tree{m_file_tree};
-        std::weak_ptr<NvimWidget> weak_nvim_for_cd{m_nvim};
-        std::weak_ptr<LayerInstanceManager> weak_instance_mgr{
-            m_instance_manager};
-        m_dock_layout->on_open_folder.connect(
-            [weak_file_tree, weak_nvim_for_cd, weak_instance_mgr]() {
-                auto file_tree = weak_file_tree.lock();
-                if (!file_tree) {
-                    return;
-                }
-
+        // File > Open Folder... — replaces the workspace with a single folder.
+        auto open_folder_dialog = []() {
 #ifdef IM_APP_WIN32
-                // Use wide-char (UTF-16) API on Windows for proper Unicode
-                // support. The char* API returns UTF-8 which
-                // std::filesystem::path (wchar_t-based on Windows) does not
-                // understand.
-                const wchar_t* selected_w = tinyfd_selectFolderDialogW(
-                    L"Open Folder", file_tree->current_directory().c_str());
-                if (selected_w == nullptr) {
-                    return; // User cancelled
-                }
-                std::filesystem::path selected_path{selected_w};
+            std::filesystem::path start_dir =
+                g_workspace.first_folder_or_home();
+            const wchar_t* selected_w =
+                tinyfd_selectFolderDialogW(L"Open Folder", start_dir.c_str());
+            if (selected_w == nullptr) {
+                return;
+            }
+            std::filesystem::path selected_path{selected_w};
 #else
-                std::string current_dir =
-                    file_tree->current_directory().string();
-                const char* selected = tinyfd_selectFolderDialog(
-                    "Open Folder", current_dir.c_str());
-                if (selected == nullptr) {
-                    return; // User cancelled
-                }
-                std::filesystem::path selected_path{selected};
+            std::filesystem::path start_dir =
+                g_workspace.first_folder_or_home();
+            std::string start_str = ImApp::path_to_string(start_dir);
+            const char* selected =
+                tinyfd_selectFolderDialog("Open Folder", start_str.c_str());
+            if (selected == nullptr) {
+                return;
+            }
+            std::filesystem::path selected_path{selected};
 #endif
+            // If another instance already has this folder as its sole
+            // workspace folder, activate it instead.
+            std::filesystem::path abs_path =
+                std::filesystem::absolute(selected_path);
+            std::string key = "ImNeovim:" + ImApp::path_to_string(abs_path);
+            key = std::to_string(std::hash<std::string>{}(key));
 
-                // Rebind the instance lock to the new folder.
-                if (auto instance_mgr = weak_instance_mgr.lock()) {
-                    if (!instance_mgr->change_folder(selected_path)) {
-                        // Another instance already owns this folder — an
-                        // activate message was already sent to it. Simply
-                        // stay on the current folder.
-                        return;
-                    }
-                }
+            auto ipc = ImApp::IpcChannel::create();
+            if (ipc->send_message(key, "")) {
+                return; // Existing instance activated.
+            }
 
-                // Update the file tree.
-                file_tree->set_current_directory(selected_path);
+            // Replace the workspace with the selected folder.
+            g_workspace.replace_with(selected_path);
+        };
+        m_dock_layout->on_open_folder.connect(open_folder_dialog);
 
-                // Send :cd to Neovim to keep the working directory in sync.
-                auto nvim = weak_nvim_for_cd.lock();
-                if (!nvim) {
-                    return;
-                }
+        // File > Add Folder to Workspace...
+        m_dock_layout->on_add_folder_to_workspace.connect(add_folder_dialog);
+    }
 
-                std::string path = ImApp::path_to_string(selected_path);
-                std::replace(path.begin(), path.end(), '\\', '/');
-                std::string cmd = "cd " + path;
+    // Keep nvim's working directory in sync with the first workspace folder.
+    {
+        std::weak_ptr<NvimWidget> weak_nvim{m_nvim};
+        g_workspace.on_changed.connect([weak_nvim]() {
+            auto nvim = weak_nvim.lock();
+            if (!nvim) {
+                return;
+            }
 
-                auto request = nvim->start_nvim_request(
-                    "nvim_command", 1,
-                    [](msgpack::object&) {
-                        // :cd succeeded — Neovim will emit a chdir redraw
-                        // event that updates the internal cwd tracking.
-                    },
-                    [](int32_t error_code, const std::string& error_msg) {
-                        LOG_ERROR("Failed to change directory: {} - {}",
-                                  error_code, error_msg);
-                    });
+            std::filesystem::path cwd = g_workspace.first_folder_or_home();
+            std::string path = ImApp::path_to_string(cwd);
+            std::replace(path.begin(), path.end(), '\\', '/');
+            std::string cmd = "cd " + path;
 
-                if (request) {
-                    request->arg_str(cmd.size());
-                    request->arg_str_body(cmd.data(), cmd.size());
-                }
-            });
+            auto request = nvim->start_nvim_request(
+                "nvim_command", 1,
+                [](msgpack::object&) {
+                    // :cd succeeded — Neovim will emit a chdir redraw
+                    // event that updates the internal cwd tracking.
+                },
+                [](int32_t error_code, const std::string& error_msg) {
+                    LOG_ERROR("Failed to change directory: {} - {}", error_code,
+                              error_msg);
+                });
+
+            if (request) {
+                request->arg_str(cmd.size());
+                request->arg_str_body(cmd.data(), cmd.size());
+            }
+        });
     }
 
     // On macOS, wire up the native menu bar so it emits the same dock
@@ -137,6 +184,11 @@ void LayerMainWindow::on_attach() {
         ImNeovim::g_native_on_open_folder.connect([weak_dock]() {
             if (auto dock = weak_dock.lock()) {
                 dock->on_open_folder.emit();
+            }
+        });
+        ImNeovim::g_native_on_add_folder_to_workspace.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->on_add_folder_to_workspace.emit();
             }
         });
         ImNeovim::g_native_on_about.connect([weak_dock]() {
@@ -196,8 +248,8 @@ void LayerMainWindow::on_imgui_render() {
     }
 
     // Render about panel.
-    m_about_panel.render(m_nvim ? m_nvim->nvim_version_string()
-                                : std::string{});
+    m_about_panel->render(m_nvim ? m_nvim->nvim_version_string()
+                                 : std::string{});
 
     // Handle pending layout reset after all rendering is done
     if (m_dock_layout && m_dock_layout->is_reset_pending()) {

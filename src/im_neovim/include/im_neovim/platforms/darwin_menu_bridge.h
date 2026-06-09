@@ -10,6 +10,9 @@ namespace ImNeovim {
 /// File > Open Folder... (Cmd+O)
 extern Signal<> g_native_on_open_folder;
 
+/// File > Add Folder to Workspace...
+extern Signal<> g_native_on_add_folder_to_workspace;
+
 /// App menu > About ImNeovim  (replaces orderFrontStandardAboutPanel:)
 extern Signal<> g_native_on_about;
 

@@ -99,8 +99,11 @@ class DockSpaceLayout {
 
     // -- Menu action signals (connected by LayerMainWindow) --
 
-    /// Emitted when File > Open Folder is clicked.
+    /// Emitted when File > Open Folder is clicked (replaces workspace).
     Signal<> on_open_folder;
+
+    /// Emitted when File > Add Folder to Workspace is clicked.
+    Signal<> on_add_folder_to_workspace;
 
     /// Emitted when File > Exit is clicked.
     Signal<> on_exit;

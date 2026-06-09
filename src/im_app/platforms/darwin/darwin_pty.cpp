@@ -24,7 +24,8 @@ DarwinPseudoTerminal::~DarwinPseudoTerminal() {
     }
 }
 
-bool DarwinPseudoTerminal::launch(uint16_t row, uint16_t col) {
+bool DarwinPseudoTerminal::launch(uint16_t row, uint16_t col,
+                                  const std::filesystem::path& cwd) {
     if (is_valid()) {
         return true;
     }
@@ -227,6 +228,14 @@ bool DarwinPseudoTerminal::launch(uint16_t row, uint16_t col) {
         // Flush buffered log messages before execv() replaces the process
         // image, otherwise they'd be lost.
         spdlog::default_logger()->flush();
+
+        // Change to the requested working directory.
+        if (!cwd.empty()) {
+            if (chdir(cwd.c_str()) != 0) {
+                spdlog::warn("chdir to '{}' failed: {}", cwd.string(),
+                             strerror(errno));
+            }
+        }
 
         execv(shell_exec_path_buf, args);
 

@@ -7,7 +7,8 @@ namespace ImApp {
 class DarwinPseudoTerminal : public PseudoTerminal {
   public:
     virtual ~DarwinPseudoTerminal();
-    virtual bool launch(uint16_t row, uint16_t col) override;
+    virtual bool launch(uint16_t row, uint16_t col,
+                        const std::filesystem::path& cwd) override;
     virtual void terminate() override;
     virtual bool is_valid() override;
     virtual size_t write(const void* buff, size_t size) override;

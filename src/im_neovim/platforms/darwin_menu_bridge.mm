@@ -6,6 +6,7 @@ namespace ImNeovim {
 
 // -- Global signal definitions --
 Signal<> g_native_on_open_folder;
+Signal<> g_native_on_add_folder_to_workspace;
 Signal<> g_native_on_about;
 Signal<> g_native_on_reset_layout;
 Signal<> g_native_on_exit;
@@ -22,6 +23,11 @@ Signal<> g_native_on_exit;
 - (void)openFolderAction:(id)sender {
     (void)sender;
     ImNeovim::g_native_on_open_folder.emit();
+}
+
+- (void)addFolderToWorkspaceAction:(id)sender {
+    (void)sender;
+    ImNeovim::g_native_on_add_folder_to_workspace.emit();
 }
 
 - (void)aboutAction:(id)sender {
@@ -83,6 +89,12 @@ void darwin_setup_native_menus() {
                       keyEquivalent:@"o"];
     [open_item setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
     [open_item setTarget:s_target];
+
+    NSMenuItem *add_item =
+        [file_menu addItemWithTitle:@"Add Folder to Workspace..."
+                             action:@selector(addFolderToWorkspaceAction:)
+                      keyEquivalent:@""];
+    [add_item setTarget:s_target];
 
     [file_menu addItem:[NSMenuItem separatorItem]];
 

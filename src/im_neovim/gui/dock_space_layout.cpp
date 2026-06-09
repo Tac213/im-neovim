@@ -84,6 +84,9 @@ void DockSpaceLayout::render() {
             if (ImGui::MenuItem("Open Folder...")) {
                 on_open_folder.emit();
             }
+            if (ImGui::MenuItem("Add Folder to Workspace...")) {
+                on_add_folder_to_workspace.emit();
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Exit")) {
                 on_exit.emit();

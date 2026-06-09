@@ -38,7 +38,7 @@ struct ParsedFont {
 class NvimWidget : public TextWidget,
                    public std::enable_shared_from_this<NvimWidget> {
   public:
-    explicit NvimWidget(std::filesystem::path initial_cwd = {});
+    explicit NvimWidget();
     ~NvimWidget();
 
     void open_file(const std::filesystem::path& path);

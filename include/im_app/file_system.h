@@ -21,6 +21,7 @@ inline std::string path_to_string(const std::filesystem::path& p) {
 struct FileSystem {
     static std::filesystem::path executable_path();
     static std::filesystem::path local_app_data_path();
+    static std::filesystem::path home_directory();
 };
 
 } // namespace ImApp

@@ -36,4 +36,17 @@ std::filesystem::path FileSystem::local_app_data_path() {
     auto ret = pw_dir / ".cache";
     return ret;
 }
+
+std::filesystem::path FileSystem::home_directory() {
+    const char* home = getenv("HOME");
+    if (home != nullptr && home[0] != '\0') {
+        return std::filesystem::path{home};
+    }
+    // Fallback: getpwuid
+    const auto* pwuid = getpwuid(getuid());
+    if (pwuid != nullptr && pwuid->pw_dir != nullptr) {
+        return std::filesystem::path{pwuid->pw_dir};
+    }
+    return std::filesystem::path{};
+}
 } // namespace ImApp

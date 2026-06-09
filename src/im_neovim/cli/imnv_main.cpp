@@ -1,13 +1,16 @@
 // imnv — CLI launcher for ImNeovim.
-// Usage: imnv [folder]
-//   - With folder: open imnvim in that folder, exit immediately.
-//   - Without folder: open imnvim in CWD, exit immediately.
-//   - If an imnvim instance already exists for the folder, activate it instead.
+// Usage: imnv [path1[;path2...]]   (; on Windows, : on Unix)
+//   - With paths: open imnvim with those folders, exit immediately.
+//   - Without paths: open imnvim with empty workspace, exit immediately.
+//   - If an imnvim instance already exists for the same set of folders,
+//     activate it instead.
 
 #include <im_app/ipc_channel.h>
 
 #include <filesystem>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -33,12 +36,16 @@ extern char** environ;
 
 namespace {
 
-std::string derive_key(const std::filesystem::path& path) {
-    if (path.empty()) {
-        return "__no_folder__";
+/// Derive an instance key from all folder paths combined.
+std::string derive_key(const std::vector<std::string>& folders) {
+    if (folders.empty()) {
+        return {};
     }
-    auto abs_path = std::filesystem::absolute(path);
-    std::string input = "ImNeovim:" + abs_path.string();
+    std::string input = "ImNeovim:";
+    for (const auto& f : folders) {
+        auto abs_path = std::filesystem::absolute(f);
+        input += abs_path.string();
+    }
     auto hash = std::hash<std::string>{}(input);
     return std::to_string(hash);
 }
@@ -80,14 +87,18 @@ std::string get_imnvim_path() {
 #endif
 }
 
-/// Spawn imnvim as a detached child process with the given working directory.
+/// Spawn imnvim as a detached child process, passing the given argument
+/// string (if non-empty) as argv[1].
 /// Returns true on success.
-bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
+bool spawn_imnvim(const std::string& imnvim_path, const std::string& arg) {
 #ifdef _WIN32
     std::wstring wpath(imnvim_path.begin(), imnvim_path.end());
-    std::wstring wcwd(cwd.begin(), cwd.end());
-    // Pass the full executable path as argv[0] via the command line.
+
     std::wstring wargs = L"\"" + wpath + L"\"";
+    if (!arg.empty()) {
+        std::wstring warg(arg.begin(), arg.end());
+        wargs += L" \"" + warg + L"\"";
+    }
 
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
@@ -95,7 +106,7 @@ bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
 
     BOOL ok = ::CreateProcessW(nullptr, wargs.data(), nullptr, nullptr, FALSE,
                                CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
-                               nullptr, wcwd.c_str(), &si, &pi);
+                               nullptr, nullptr, &si, &pi);
 
     if (ok) {
         ::CloseHandle(pi.hProcess);
@@ -104,7 +115,12 @@ bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
     }
     return false;
 #else
-    const char* argv[] = {imnvim_path.c_str(), nullptr};
+    std::vector<const char*> argv;
+    argv.push_back(imnvim_path.c_str());
+    if (!arg.empty()) {
+        argv.push_back(arg.c_str());
+    }
+    argv.push_back(nullptr);
 
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
@@ -112,7 +128,6 @@ bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addchdir_np(&actions, cwd.c_str());
     posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
                                      O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null",
@@ -122,7 +137,7 @@ bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
 
     pid_t pid;
     int rc = posix_spawn(&pid, imnvim_path.c_str(), &actions, &attr,
-                         const_cast<char* const*>(argv), environ);
+                         const_cast<char* const*>(argv.data()), environ);
 
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
@@ -134,37 +149,52 @@ bool spawn_imnvim(const std::string& imnvim_path, const std::string& cwd) {
 } // anonymous namespace
 
 int main(int argc, char** argv) {
-    // Determine the target folder.
-    std::filesystem::path folder;
+    // Parse argv[1] for workspace folders, split on the platform
+    // path separator (matching imnvim's own argv parsing).
+#ifdef _WIN32
+    constexpr char path_sep = ';';
+#else
+    constexpr char path_sep = ':';
+#endif
+
+    std::vector<std::string> folders;
     if (argc >= 2) {
-        folder = argv[1];
-    } else {
-        folder = std::filesystem::current_path();
+        std::string_view arg{argv[1]};
+        size_t start = 0;
+        while (start < arg.size()) {
+            auto end = arg.find(path_sep, start);
+            if (end == std::string_view::npos) {
+                end = arg.size();
+            }
+            if (end > start) {
+                auto token = arg.substr(start, end - start);
+                std::error_code ec;
+                std::filesystem::path p{token};
+                p = std::filesystem::absolute(p, ec);
+                if (!ec && std::filesystem::is_directory(p)) {
+                    folders.push_back(p.string());
+                }
+            }
+            start = end + 1;
+        }
     }
 
-    // Normalize to absolute path.
-    std::error_code ec;
-    folder = std::filesystem::absolute(folder, ec);
-    if (ec) {
-        folder = std::filesystem::current_path();
-    }
+    std::string key = derive_key(folders);
 
-    std::string key = derive_key(folder);
-
-    // Try to activate an existing instance.
-    auto ipc = ImApp::IpcChannel::create();
-    if (ipc->send_message(key, "")) {
-        // Existing instance was activated.
-        return 0;
+    // If we have folders, try to activate an existing instance.
+    if (!key.empty()) {
+        auto ipc = ImApp::IpcChannel::create();
+        if (ipc->send_message(key, "")) {
+            return 0;
+        }
     }
 
     // No existing instance — spawn imnvim as a detached child process.
     std::string imnvim_path = get_imnvim_path();
-    std::string folder_str = folder.string();
+    std::string arg = (argc >= 2) ? argv[1] : "";
 
-    if (!spawn_imnvim(imnvim_path, folder_str)) {
-        // Fallback: try just the filename in case it's on PATH.
-        spawn_imnvim("imnvim", folder_str);
+    if (!spawn_imnvim(imnvim_path, arg)) {
+        spawn_imnvim("imnvim", arg);
     }
 
     return 0;

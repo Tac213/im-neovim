@@ -1,50 +1,109 @@
 #include "layer_instance_manager.h"
 
+#include "im_neovim/globals.h"
 #include "im_neovim/logging.h"
 #include <im_app/instance_lock.h>
 #include <im_app/ipc_channel.h>
 
 namespace ImNeovim {
 
-std::string
-LayerInstanceManager::derive_key(const std::filesystem::path& path) {
-    if (path.empty()) {
-        return "__no_folder__";
+LayerInstanceManager::LayerInstanceManager() {
+    // Derive the instance key from the global workspace.
+    m_instance_key = g_workspace.derive_instance_key();
+
+    if (m_instance_key.empty()) {
+        // Empty workspace — no instance locking, always primary.
+        m_is_primary = true;
+        return;
     }
-    auto abs_path = std::filesystem::absolute(path);
-    // Include the app identity in the hash so different apps using
-    // im_app don't collide on the same folder path.
-    std::string input = "ImNeovim:" + abs_path.string();
-    auto hash = std::hash<std::string>{}(input);
-    return std::to_string(hash);
+
+    _acquire_lock(m_instance_key);
 }
 
-LayerInstanceManager::LayerInstanceManager(std::filesystem::path folder_path)
-    : m_folder_path(std::move(folder_path)),
-      m_instance_key(derive_key(m_folder_path)) {
-
-    // Try to acquire the instance lock for this folder.
-    m_lock = ImApp::InstanceLock::create(m_instance_key);
-    m_is_primary = m_lock->acquired();
-
-    if (!m_is_primary) {
-        // Another instance exists — send activate message and report
-        // non-primary so the caller can exit.
-        auto ipc = ImApp::IpcChannel::create();
-        ipc->send_message(m_instance_key, "");
-        LOG_INFO("Activating existing instance for folder: {}",
-                 m_folder_path.string());
-    }
-}
-
-LayerInstanceManager::~LayerInstanceManager() = default;
+LayerInstanceManager::~LayerInstanceManager() { _release_lock(); }
 
 void LayerInstanceManager::on_attach() {
     if (!m_is_primary) {
         return;
     }
 
-    // Create IPC channel and bind to our instance key.
+    _rebind_ipc();
+
+    // Listen for workspace changes so we can rebind the lock/IPC.
+    m_workspace_changed_conn = g_workspace.on_changed.connect([this]() {
+        std::string new_key = g_workspace.derive_instance_key();
+
+        if (new_key == m_instance_key) {
+            return; // No change.
+        }
+
+        LOG_INFO("Workspace changed - rebinding instance lock from '{}' to "
+                 "'{}'",
+                 m_instance_key, new_key);
+
+        // Release old resources.
+        m_ipc.reset();
+        m_lock.reset();
+
+        m_instance_key = new_key;
+
+        if (m_instance_key.empty()) {
+            // Workspace became empty — no locking needed.
+            m_is_primary = true;
+            return;
+        }
+
+        _acquire_lock(m_instance_key);
+        if (m_is_primary) {
+            _rebind_ipc();
+        }
+        // If !m_is_primary, the lock acquisition already sent an
+        // activate message to the existing instance.  This instance
+        // should probably exit — but for now we continue as primary
+        // since we already have the window open.
+        m_is_primary = true;
+    });
+}
+
+void LayerInstanceManager::on_update() {
+    if (m_pending_activate.exchange(false)) {
+        LOG_INFO("Processing deferred remote activate for workspace key: {}",
+                 m_instance_key);
+        on_remote_activate.emit();
+    }
+}
+
+void LayerInstanceManager::on_detach() {
+    if (m_workspace_changed_conn != 0) {
+        g_workspace.on_changed.disconnect(m_workspace_changed_conn);
+        m_workspace_changed_conn = 0;
+    }
+    m_ipc.reset();
+    m_lock.reset();
+}
+
+void LayerInstanceManager::_acquire_lock(const std::string& key) {
+    m_lock = ImApp::InstanceLock::create(key);
+    m_is_primary = m_lock->acquired();
+
+    if (!m_is_primary) {
+        // Another instance exists — send activate message.
+        auto ipc = ImApp::IpcChannel::create();
+        ipc->send_message(key, "");
+        LOG_INFO("Activating existing instance for key: {}", key);
+    }
+}
+
+void LayerInstanceManager::_release_lock() {
+    m_ipc.reset();
+    m_lock.reset();
+}
+
+void LayerInstanceManager::_rebind_ipc() {
+    if (m_instance_key.empty()) {
+        return;
+    }
+
     m_ipc = ImApp::IpcChannel::create();
     if (!m_ipc->bind(m_instance_key)) {
         LOG_ERROR("Failed to bind IPC channel for key: {}", m_instance_key);
@@ -55,81 +114,11 @@ void LayerInstanceManager::on_attach() {
         [this](const std::string& message) { _handle_ipc_message(message); });
 
     m_ipc->start_listening();
-    LOG_INFO("IPC listener started for folder: {}", m_folder_path.string());
-}
-
-void LayerInstanceManager::on_update() {
-    // Check for a pending remote-activate request that arrived on the
-    // IPC background thread.  We must call activate_window() from the
-    // main thread because the platform window activation APIs (GLFW /
-    // Win32 / Metal) are not thread-safe.
-    if (m_pending_activate.exchange(false)) {
-        LOG_INFO("Processing deferred remote activate for folder: {}",
-                 m_folder_path.string());
-        on_remote_activate.emit();
-    }
-}
-
-void LayerInstanceManager::on_detach() {
-    if (m_ipc) {
-        m_ipc.reset();
-    }
-    if (m_lock) {
-        m_lock.reset();
-    }
-}
-
-bool LayerInstanceManager::change_folder(
-    const std::filesystem::path& new_path) {
-    std::string new_key = derive_key(new_path);
-
-    // No change.
-    if (new_key == m_instance_key) {
-        return true;
-    }
-
-    // Try to acquire the lock for the new folder before releasing the
-    // old one.  If another instance already owns the new folder, send
-    // it an activate message and report failure.
-    auto new_lock = ImApp::InstanceLock::create(new_key);
-    if (!new_lock->acquired()) {
-        auto ipc = ImApp::IpcChannel::create();
-        ipc->send_message(new_key, "");
-        LOG_INFO("Activating existing instance for folder: {}",
-                 new_path.string());
-        return false;
-    }
-
-    // Release old resources.
-    m_ipc.reset();
-    m_lock.reset();
-
-    // Take ownership of the new lock and update identity.
-    m_lock = std::move(new_lock);
-    m_instance_key = std::move(new_key);
-    m_folder_path = new_path;
-    m_is_primary = true;
-
-    // Re-bind IPC for the new key.
-    m_ipc = ImApp::IpcChannel::create();
-    if (!m_ipc->bind(m_instance_key)) {
-        LOG_ERROR("Failed to bind IPC channel for key: {}", m_instance_key);
-    } else {
-        m_ipc->set_message_handler([this](const std::string& message) {
-            _handle_ipc_message(message);
-        });
-        m_ipc->start_listening();
-        LOG_INFO("IPC listener started for folder: {}", m_folder_path.string());
-    }
-
-    return true;
+    LOG_INFO("IPC listener started for key: {}", m_instance_key);
 }
 
 void LayerInstanceManager::_handle_ipc_message(const std::string& /*message*/) {
-    LOG_INFO("Received remote activate request for folder: {}",
-             m_folder_path.string());
-    // Set the flag — on_update() will emit on_remote_activate from the
-    // main thread, where GLFW / platform window calls are safe.
+    LOG_INFO("Received remote activate request for key: {}", m_instance_key);
     m_pending_activate.store(true);
 }
 

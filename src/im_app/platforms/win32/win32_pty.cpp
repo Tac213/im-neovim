@@ -49,7 +49,8 @@ Win32PseudoTerminal::~Win32PseudoTerminal() {
     }
 }
 
-bool Win32PseudoTerminal::launch(uint16_t row, uint16_t col) {
+bool Win32PseudoTerminal::launch(uint16_t row, uint16_t col,
+                                 const std::filesystem::path& cwd) {
     if (is_valid()) {
         return true;
     }
@@ -154,7 +155,7 @@ bool Win32PseudoTerminal::launch(uint16_t row, uint16_t col) {
                           nullptr, nullptr, FALSE, /* Inherit handles */
                           EXTENDED_STARTUPINFO_PRESENT,
                           nullptr, /* Use parent's environment block*/
-                          nullptr, /* Use parent's starting directory*/
+                          cwd.empty() ? nullptr : cwd.c_str(),
                           reinterpret_cast<LPSTARTUPINFOW>(&si), &m_cmd_pi)) {
         spdlog::critical(
             L"Failed to launch windows command prompt, path: '{}'.", cmd_path);

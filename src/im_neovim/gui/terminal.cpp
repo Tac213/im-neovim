@@ -1,6 +1,8 @@
 #include "im_neovim/gui/terminal.h"
+#include "im_neovim/globals.h"
 #include "im_neovim/logging.h"
 #include <fmt/ranges.h>
+#include <im_app/file_system.h>
 #include <type_traits>
 
 namespace ImNeovim {
@@ -227,13 +229,13 @@ void Terminal::paste_from_clipboard() const {
 }
 
 void Terminal::_start_shell() {
-    // Open PTY master
-    if (m_pty->launch(
-            m_state.row,
-            m_state.col)) { // Use initial rows/cols from Terminal state object
+    // Determine the working directory from the workspace.
+    auto cwd = g_workspace.first_folder_or_home();
+
+    if (m_pty->launch(m_state.row, m_state.col, cwd)) {
         m_read_thread = std::thread(&Terminal::_read_output, this);
     } else {
-        LOG_CRITICAL("Faield to launch pty!");
+        LOG_CRITICAL("Failed to launch pty!");
     }
 }
 
