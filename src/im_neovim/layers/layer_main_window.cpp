@@ -124,7 +124,7 @@ void LayerMainWindow::on_attach() {
             // If another instance already has this folder as its sole
             // workspace folder, activate it instead.
             std::filesystem::path abs_path =
-                std::filesystem::absolute(selected_path);
+                std::filesystem::weakly_canonical(selected_path);
             std::string key = "ImNeovim:" + ImApp::path_to_string(abs_path);
             key = std::to_string(std::hash<std::string>{}(key));
 

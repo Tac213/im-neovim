@@ -43,8 +43,9 @@ std::string derive_key(const std::vector<std::string>& folders) {
     }
     std::string input = "ImNeovim:";
     for (const auto& f : folders) {
-        auto abs_path = std::filesystem::absolute(f);
-        input += abs_path.string();
+        auto abs_path = std::filesystem::weakly_canonical(f);
+        auto u8p = abs_path.u8string();
+        input += std::string{u8p.begin(), u8p.end()};
     }
     auto hash = std::hash<std::string>{}(input);
     return std::to_string(hash);
@@ -170,9 +171,10 @@ int main(int argc, char** argv) {
                 auto token = arg.substr(start, end - start);
                 std::error_code ec;
                 std::filesystem::path p{token};
-                p = std::filesystem::absolute(p, ec);
+                p = std::filesystem::weakly_canonical(p, ec);
                 if (!ec && std::filesystem::is_directory(p)) {
-                    folders.push_back(p.string());
+                    auto u8p = p.u8string();
+                    folders.push_back(std::string{u8p.begin(), u8p.end()});
                 }
             }
             start = end + 1;

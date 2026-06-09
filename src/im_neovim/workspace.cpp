@@ -10,7 +10,7 @@ void Workspace::add_folder(const std::filesystem::path& path) {
         return;
     }
 
-    std::filesystem::path abs_path = std::filesystem::absolute(path);
+    std::filesystem::path abs_path = std::filesystem::weakly_canonical(path);
 
     // Validate that the path exists and is a directory.
     std::error_code ec;
@@ -32,7 +32,7 @@ void Workspace::add_folder(const std::filesystem::path& path) {
 }
 
 void Workspace::remove_folder(const std::filesystem::path& path) {
-    std::filesystem::path abs_path = std::filesystem::absolute(path);
+    std::filesystem::path abs_path = std::filesystem::weakly_canonical(path);
 
     auto it = std::find(m_folders.begin(), m_folders.end(), abs_path);
     if (it == m_folders.end()) {
@@ -49,7 +49,7 @@ void Workspace::replace_with(const std::filesystem::path& path) {
         return;
     }
 
-    std::filesystem::path abs_path = std::filesystem::absolute(path);
+    std::filesystem::path abs_path = std::filesystem::weakly_canonical(path);
 
     std::error_code ec;
     if (!std::filesystem::is_directory(abs_path, ec)) {
