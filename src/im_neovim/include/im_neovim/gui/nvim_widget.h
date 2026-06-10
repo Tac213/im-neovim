@@ -109,12 +109,16 @@ class NvimWidget : public TextWidget,
     void _show_save_modal();
     void _render_save_modal();
     void _handle_save_decision(bool save, bool discard);
-    void _do_open_file(const std::filesystem::path& path, bool force = false);
+    void _do_open_file(const std::filesystem::path& path, bool force = false,
+                       std::string_view open_command = "edit ");
 
     /* Font management */
     static ParsedFont _parse_guifont(const std::string& guifont_str);
     void _check_font_reload_needed();
     void _execute_font_reload();
+
+    /* Startup file queue */
+    void _process_startup_files();
 
     /* Redraw operation handlers */
     void _redraw_resize(msgpack::object_array& args);
@@ -388,6 +392,7 @@ class NvimWidget : public TextWidget,
 
     // Buffer modification tracking
     bool m_buffer_modified{false};
+    bool m_has_active_buffer{false};
     bool m_needs_modified_check{false};
     // Save dialog state
     bool m_show_save_dialog{false};

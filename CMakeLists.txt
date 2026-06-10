@@ -274,10 +274,22 @@ add_executable(imnv
 target_link_libraries(imnv PRIVATE spdlog::spdlog)
 target_include_directories(imnv PRIVATE
     "${public_dir}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     target_link_libraries(imnv PRIVATE user32.lib)
+endif()
+
+# Keep imnv inside the .app bundle in sync when imnv alone is rebuilt
+# (the POST_BUILD copy on imnvim only fires when imnvim is re-linked).
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    add_custom_command(TARGET imnv POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:imnv>"
+        "$<TARGET_BUNDLE_CONTENT_DIR:imnvim>/MacOS/"
+        COMMENT "Updating imnv in ImNeovim.app/Contents/MacOS/..."
+    )
 endif()
 
 # -- Generate build_config.h from template --

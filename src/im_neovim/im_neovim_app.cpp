@@ -54,31 +54,42 @@ namespace ImApp {
 Application* create_im_app(int argc, char** argv) {
     ImNeovim::initialize_logger();
 
-    // Parse argv[1..] for workspace folders.
-    // Each argument is split on the platform path separator so both
-    //   imnvim C:\foo;C:\bar   (Windows, manual invocation)
-    //   imnvim /a:/b           (Unix, manual invocation)
-    // and direct per-argument passing from the imnv launcher work.
-#ifdef IM_APP_WIN32
-    constexpr char path_sep = ';';
-#else
-    constexpr char path_sep = ':';
-#endif
-
+    // Parse argv[1..] for workspace folders and files to edit.
+    // Directories go to the workspace; regular files (or paths whose
+    // parent directory exists) are queued for opening once the nvim
+    // API connection is ready.
     for (int i = 1; i < argc; ++i) {
         std::string_view arg{argv[i]};
-        size_t start = 0;
-        while (start < arg.size()) {
-            auto end = arg.find(path_sep, start);
-            if (end == std::string_view::npos) {
-                end = arg.size();
+
+        // Skip flags (imnvim doesn't define any yet, but be
+        // forward-compatible).
+        if (arg.starts_with("--")) {
+            continue;
+        }
+
+        std::filesystem::path p{arg};
+        std::error_code ec;
+        auto status = std::filesystem::status(p, ec);
+        // Note: ec may be set to ENOENT on some platforms for
+        // non-existent paths.  The subsequent checks handle all
+        // cases correctly regardless.
+
+        if (std::filesystem::is_directory(status)) {
+            ImNeovim::g_workspace.add_folder(p);
+        } else if (std::filesystem::is_regular_file(status)) {
+            ImNeovim::g_pending_startup_files.push_back(
+                std::filesystem::weakly_canonical(p));
+        } else if (!std::filesystem::exists(status)) {
+            // File does not exist yet — check if the parent
+            // directory exists.  If so, treat as a new file
+            // that nvim will create on :edit.
+            // An empty parent means a bare filename relative to
+            // CWD, which always exists.
+            auto parent = p.parent_path();
+            if (parent.empty() || std::filesystem::is_directory(parent, ec)) {
+                ImNeovim::g_pending_startup_files.push_back(
+                    std::filesystem::weakly_canonical(p));
             }
-            if (end > start) {
-                auto token = arg.substr(start, end - start);
-                std::filesystem::path p{token};
-                ImNeovim::g_workspace.add_folder(p);
-            }
-            start = end + 1;
         }
     }
 
@@ -102,6 +113,16 @@ Application* create_im_app(int argc, char** argv) {
     // Connect remote activate signal to window activation.
     instance_mgr->on_remote_activate.connect(
         []() { IM_APP.activate_window(); });
+
+    // Connect remote file-open signal: push files to the global
+    // startup queue so NvimWidget picks them up on the next frame.
+    instance_mgr->on_remote_open_files.connect(
+        [](const std::vector<std::filesystem::path>& files) {
+            ImNeovim::g_pending_startup_files.insert(
+                ImNeovim::g_pending_startup_files.end(), files.begin(),
+                files.end());
+        });
+
     app->push_layer(main_layer);
 
     return app;

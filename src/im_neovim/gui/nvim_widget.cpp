@@ -227,7 +227,8 @@ void NvimWidget::open_file(const std::filesystem::path& path) {
     _do_open_file(path);
 }
 
-void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force) {
+void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force,
+                               std::string_view open_command) {
     // Ensure the window is visible
     set_visible(true);
     m_window_open = true;
@@ -236,8 +237,12 @@ void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force) {
     std::string escaped_path = ImApp::path_to_string(path);
     std::replace(escaped_path.begin(), escaped_path.end(), '\\', '/');
 
-    // Build the edit command — use 'edit!' when discarding changes
-    std::string cmd = force ? "edit! " : "edit ";
+    // Build the command — use the provided open command (e.g. "edit ",
+    // "vsplit "), appending '!' when discarding changes.
+    std::string cmd{open_command};
+    if (force && cmd.back() == ' ') {
+        cmd.back() = '!';
+    }
     cmd += escaped_path;
 
     // Extract the base filename for the window title.
@@ -248,6 +253,7 @@ void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force) {
         "nvim_command", 1,
         [this, filename](msgpack::object&) {
             m_window_title = filename;
+            m_has_active_buffer = true;
             m_buffer_modified = false;
             m_needs_modified_check = true;
             LOG_DEBUG("File opened successfully: {}", filename);
@@ -265,6 +271,12 @@ void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force) {
 void NvimWidget::render() {
     if (m_nvim_proc.pid == 0) {
         _spawn_nvim();
+    }
+
+    // Process startup files delivered via IPC while nvim is already
+    // attached (the initial batch is handled in _set_nvim_attached).
+    if (m_nvim_attached) {
+        _process_startup_files();
     }
 
     // Process any pending font reload BEFORE any ImGui window operations.
@@ -1174,10 +1186,34 @@ void NvimWidget::_initialize() {
     m_multigrid_enabled = true;
 }
 
+void NvimWidget::_process_startup_files() {
+    if (g_pending_startup_files.empty()) {
+        return;
+    }
+
+    auto files = std::move(g_pending_startup_files);
+    g_pending_startup_files.clear();
+
+    LOG_INFO("Processing {} startup file(s)", files.size());
+
+    for (size_t i = 0; i < files.size(); ++i) {
+        // First file with :edit when no buffer is active,
+        // :vsplit otherwise.
+        std::string_view cmd;
+        if (!m_has_active_buffer && i == 0) {
+            cmd = "edit ";
+        } else {
+            cmd = "vsplit ";
+        }
+        _do_open_file(files[i], false, cmd);
+    }
+}
+
 void NvimWidget::_set_nvim_attached(bool attached) {
     m_nvim_attached = attached;
     if (attached) {
         _notify_nvim_resize(m_state.col, m_state.row);
+        _process_startup_files();
     }
 }
 
@@ -1742,6 +1778,7 @@ void NvimWidget::_redraw_set_title(msgpack::object_array& args) {
         m_window_title = "nvim (no file)";
     } else {
         m_window_title = title;
+        m_has_active_buffer = true;
     }
 }
 

@@ -117,7 +117,47 @@ void LayerInstanceManager::_rebind_ipc() {
     LOG_INFO("IPC listener started for key: {}", m_instance_key);
 }
 
-void LayerInstanceManager::_handle_ipc_message(const std::string& /*message*/) {
+void LayerInstanceManager::_handle_ipc_message(const std::string& message) {
+    // Empty message or just "FILES" with no paths — activate only.
+    if (message.empty() || message == "FILES") {
+        LOG_INFO("Received remote activate request for key: {}",
+                 m_instance_key);
+        m_pending_activate.store(true);
+        return;
+    }
+
+    // "FILES\n<path>\n<path>..." — open files in existing instance.
+    if (message.starts_with("FILES\n")) {
+        std::vector<std::filesystem::path> files;
+        std::string_view body{message};
+        body.remove_prefix(6); // skip "FILES\n"
+
+        size_t pos = 0;
+        while (pos < body.size()) {
+            auto nl = body.find('\n', pos);
+            auto line = body.substr(pos, nl == std::string_view::npos
+                                             ? body.size() - pos
+                                             : nl - pos);
+            if (!line.empty()) {
+                files.emplace_back(line);
+            }
+            if (nl == std::string_view::npos) {
+                break;
+            }
+            pos = nl + 1;
+        }
+
+        if (!files.empty()) {
+            LOG_INFO("Received remote open-files request ({} file(s)) "
+                     "for key: {}",
+                     files.size(), m_instance_key);
+            m_pending_activate.store(true);
+            on_remote_open_files.emit(std::move(files));
+            return;
+        }
+    }
+
+    // Fallback: treat as plain activate.
     LOG_INFO("Received remote activate request for key: {}", m_instance_key);
     m_pending_activate.store(true);
 }

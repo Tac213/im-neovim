@@ -2,6 +2,7 @@
 
 #include "im_neovim/signal.h"
 #include <atomic>
+#include <filesystem>
 #include <im_app/layer.h>
 #include <memory>
 #include <string>
@@ -30,6 +31,9 @@ class LayerInstanceManager : public ImApp::Layer {
 
     /// Emitted when another instance sends an activate request.
     Signal<> on_remote_activate;
+
+    /// Emitted when another instance sends file paths to open.
+    Signal<std::vector<std::filesystem::path>> on_remote_open_files;
 
   private:
     std::string m_instance_key;
