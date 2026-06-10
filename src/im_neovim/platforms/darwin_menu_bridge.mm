@@ -5,6 +5,7 @@
 namespace ImNeovim {
 
 // -- Global signal definitions --
+Signal<> g_native_on_new_window;
 Signal<> g_native_on_open_folder;
 Signal<> g_native_on_add_folder_to_workspace;
 Signal<> g_native_on_about;
@@ -19,6 +20,11 @@ Signal<> g_native_on_exit;
 @end
 
 @implementation ImNeovimMenuTarget
+
+- (void)newWindowAction:(id)sender {
+    (void)sender;
+    ImNeovim::g_native_on_new_window.emit();
+}
 
 - (void)openFolderAction:(id)sender {
     (void)sender;
@@ -82,6 +88,16 @@ void darwin_setup_native_menus() {
                                                             action:nil
                                                      keyEquivalent:@""];
     [file_menu_item setSubmenu:file_menu];
+
+    NSMenuItem *new_window_item =
+        [file_menu addItemWithTitle:@"New Window"
+                             action:@selector(newWindowAction:)
+                      keyEquivalent:@"N"];
+    [new_window_item setKeyEquivalentModifierMask:NSEventModifierFlagShift |
+                                                  NSEventModifierFlagCommand];
+    [new_window_item setTarget:s_target];
+
+    [file_menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *open_item =
         [file_menu addItemWithTitle:@"Open Folder..."

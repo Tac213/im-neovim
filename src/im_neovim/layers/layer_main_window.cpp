@@ -13,6 +13,80 @@
 #include "im_neovim/platforms/darwin_menu_bridge.h"
 #endif
 
+#ifdef IM_APP_WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#elif defined(IM_APP_DARWIN)
+#include <fcntl.h>
+#include <spawn.h>
+#include <unistd.h>
+#else
+#include <climits>
+#include <fcntl.h>
+#include <spawn.h>
+#include <unistd.h>
+#endif
+
+#ifndef IM_APP_WIN32
+extern char** environ;
+#endif
+
+namespace {
+
+/// Spawn a detached imnvim process with no arguments.
+/// Returns true on success.
+bool spawn_new_window(const std::string& imnvim_path) {
+#ifdef IM_APP_WIN32
+    std::wstring wpath(imnvim_path.begin(), imnvim_path.end());
+    std::wstring wargs = L"\"" + wpath + L"\"";
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+
+    BOOL ok = ::CreateProcessW(nullptr, wargs.data(), nullptr, nullptr, FALSE,
+                               CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
+                               nullptr, nullptr, &si, &pi);
+
+    if (ok) {
+        ::CloseHandle(pi.hProcess);
+        ::CloseHandle(pi.hThread);
+        return true;
+    }
+    return false;
+#else
+    std::vector<const char*> argv;
+    argv.push_back(imnvim_path.c_str());
+    argv.push_back(nullptr);
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
+                                     O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null",
+                                     O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null",
+                                     O_WRONLY, 0);
+
+    pid_t pid;
+    int rc = posix_spawn(&pid, imnvim_path.c_str(), &actions, &attr,
+                         const_cast<char* const*>(argv.data()), environ);
+
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
+
+    return rc == 0;
+#endif
+}
+
+} // anonymous namespace
+
 namespace ImNeovim {
 LayerMainWindow::LayerMainWindow() {
     m_terminal = std::make_shared<Terminal>();
@@ -90,6 +164,15 @@ void LayerMainWindow::on_attach() {
     if (m_dock_layout) {
         // File > Exit
         m_dock_layout->on_exit.connect([]() { IM_APP.request_exit(); });
+
+        // File > New Window — spawn a detached imnvim process.
+        m_dock_layout->on_new_window.connect([]() {
+            std::string exe_path =
+                ImApp::path_to_string(ImApp::FileSystem::executable_path());
+            if (!spawn_new_window(exe_path)) {
+                LOG_ERROR("Failed to spawn new window: {}", exe_path);
+            }
+        });
 
         // Help > About
         std::weak_ptr<AboutPanel> weak_about_panel{m_about_panel};
@@ -204,6 +287,11 @@ void LayerMainWindow::on_attach() {
         ImNeovim::g_native_on_exit.connect([weak_dock]() {
             if (auto dock = weak_dock.lock()) {
                 dock->on_exit.emit();
+            }
+        });
+        ImNeovim::g_native_on_new_window.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->on_new_window.emit();
             }
         });
     }

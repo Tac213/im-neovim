@@ -81,6 +81,10 @@ void DockSpaceLayout::render() {
 #ifndef IM_APP_DARWIN
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("New Window", "Shift+Cmd+N")) {
+                on_new_window.emit();
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Open Folder...")) {
                 on_open_folder.emit();
             }

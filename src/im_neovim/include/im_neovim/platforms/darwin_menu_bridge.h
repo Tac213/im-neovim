@@ -7,6 +7,9 @@ namespace ImNeovim {
 // Global signals for native macOS menu actions.
 // Connected by LayerMainWindow::on_attach() on Darwin.
 
+/// File > New Window (Shift+Cmd+N)
+extern Signal<> g_native_on_new_window;
+
 /// File > Open Folder... (Cmd+O)
 extern Signal<> g_native_on_open_folder;
 
