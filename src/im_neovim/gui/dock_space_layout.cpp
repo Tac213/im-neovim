@@ -129,6 +129,25 @@ void DockSpaceLayout::render() {
         }
         ImGui::EndMenuBar();
     }
+
+    // Keyboard shortcuts for menu items (macOS uses native menus instead).
+    // Use RouteGlobal+RouteOverFocused so app shortcuts take priority over
+    // the focused nvim widget, but still yield to active ImGui items.
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_N,
+                        ImGuiInputFlags_RouteGlobal |
+                            ImGuiInputFlags_RouteOverFocused)) {
+        on_new_window.emit();
+    }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_E,
+                        ImGuiInputFlags_RouteGlobal |
+                            ImGuiInputFlags_RouteOverFocused)) {
+        on_toggle_file_tree.emit();
+    }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_GraveAccent,
+                        ImGuiInputFlags_RouteGlobal |
+                            ImGuiInputFlags_RouteOverFocused)) {
+        on_toggle_terminal.emit();
+    }
 #endif
 
     // Create the actual dockspace
