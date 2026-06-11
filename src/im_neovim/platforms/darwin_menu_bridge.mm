@@ -11,6 +11,8 @@ Signal<> g_native_on_add_folder_to_workspace;
 Signal<> g_native_on_about;
 Signal<> g_native_on_reset_layout;
 Signal<> g_native_on_exit;
+Signal<> g_native_on_toggle_file_tree;
+Signal<> g_native_on_toggle_terminal;
 
 } // namespace ImNeovim
 
@@ -51,7 +53,21 @@ Signal<> g_native_on_exit;
     ImNeovim::g_native_on_exit.emit();
 }
 
+- (void)toggleFileTreeAction:(id)sender {
+    (void)sender;
+    ImNeovim::g_native_on_toggle_file_tree.emit();
+}
+
+- (void)toggleTerminalAction:(id)sender {
+    (void)sender;
+    ImNeovim::g_native_on_toggle_terminal.emit();
+}
+
 @end
+
+// -- File-level references to menu items that need state updates --
+static NSMenuItem *s_file_tree_menu_item = nil;
+static NSMenuItem *s_terminal_menu_item = nil;
 
 // -- Public setup function --
 
@@ -137,8 +153,43 @@ void darwin_setup_native_menus() {
                       keyEquivalent:@""];
     [reset_item setTarget:s_target];
 
+    [view_menu addItem:[NSMenuItem separatorItem]];
+
+    s_file_tree_menu_item =
+        [view_menu addItemWithTitle:@"File Tree"
+                             action:@selector(toggleFileTreeAction:)
+                      keyEquivalent:@"E"];
+    [s_file_tree_menu_item
+        setKeyEquivalentModifierMask:NSEventModifierFlagCommand |
+                                     NSEventModifierFlagShift];
+    [s_file_tree_menu_item setTarget:s_target];
+    [s_file_tree_menu_item setState:NSControlStateValueOff];
+
+    s_terminal_menu_item =
+        [view_menu addItemWithTitle:@"Terminal"
+                             action:@selector(toggleTerminalAction:)
+                      keyEquivalent:@"`"];
+    [s_terminal_menu_item
+        setKeyEquivalentModifierMask:NSEventModifierFlagControl];
+    [s_terminal_menu_item setTarget:s_target];
+    [s_terminal_menu_item setState:NSControlStateValueOff];
+
     // Insert after File (index 2)
     [main_menu insertItem:view_menu_item atIndex:2];
+}
+
+void darwin_update_file_tree_menu_state(bool visible) {
+    if (s_file_tree_menu_item) {
+        s_file_tree_menu_item.state =
+            visible ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+}
+
+void darwin_update_terminal_menu_state(bool visible) {
+    if (s_terminal_menu_item) {
+        s_terminal_menu_item.state =
+            visible ? NSControlStateValueOn : NSControlStateValueOff;
+    }
 }
 
 } // namespace ImNeovim

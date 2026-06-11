@@ -8,6 +8,7 @@
 // clang-format on
 #include <im_app/layer.h>
 #include <memory>
+#include <optional>
 
 namespace ImNeovim {
 class LayerInstanceManager;
@@ -39,6 +40,11 @@ class LayerMainWindow : public ImApp::Layer {
 
     // About panel
     std::shared_ptr<AboutPanel> m_about_panel;
+
+    // Manual visibility overrides from View > File Tree / Terminal toggles.
+    // nullopt = auto (follow workspace); true/false = forced.
+    std::optional<bool> m_file_tree_forced_visible;
+    std::optional<bool> m_terminal_forced_visible;
 
     // Per-folder single-instance manager (weak — owned by layer stack).
     std::weak_ptr<LayerInstanceManager> m_instance_manager;

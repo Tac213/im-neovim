@@ -25,9 +25,21 @@ extern Signal<> g_native_on_reset_layout;
 /// File > Close Window (Cmd+W) / App menu > Quit
 extern Signal<> g_native_on_exit;
 
+/// View > File Tree (Cmd+Shift+E)
+extern Signal<> g_native_on_toggle_file_tree;
+
+/// View > Terminal (Ctrl+`)
+extern Signal<> g_native_on_toggle_terminal;
+
 /// Modify GLFW's default NSMenu bar to match ImNeovim's menu structure
 /// and replace the standard About panel with the custom one.
 /// Must be called after glfwInit() and before the main loop.
 void darwin_setup_native_menus();
+
+/// Update the checkmark state of the native File Tree menu item.
+void darwin_update_file_tree_menu_state(bool visible);
+
+/// Update the checkmark state of the native Terminal menu item.
+void darwin_update_terminal_menu_state(bool visible);
 
 } // namespace ImNeovim

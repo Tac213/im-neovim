@@ -118,6 +118,19 @@ class DockSpaceLayout {
     /// Emitted when View > Reset Layout is clicked.
     Signal<> on_reset_layout;
 
+    /// Emitted when View > File Tree is toggled.
+    Signal<> on_toggle_file_tree;
+
+    /// Emitted when View > Terminal is toggled.
+    Signal<> on_toggle_terminal;
+
+    /// Checkmark state for the ImGui View menu (non-Darwin).
+    /// Set by LayerMainWindow whenever visibility changes.
+    bool file_tree_visible{true};
+
+    /// Checkmark state for the ImGui View menu (non-Darwin).
+    bool terminal_visible{true};
+
     /**
      * @brief Sets the window names used by DockBuilderDockWindow when
      * building the default layout. Call before build_default_layout() or
@@ -131,13 +144,15 @@ class DockSpaceLayout {
     }
 
     /**
-     * @brief Builds a single-panel layout (nvim only, no splits).
+     * @brief Builds a layout matching the given panel visibility.
      *
-     * Used when the workspace is empty and the file tree / terminal
-     * panels are hidden, so that their dock nodes don't reserve
-     * blank space.
+     * Combines single-panel, two-panel, and three-panel layouts
+     * depending on which panels are currently visible.
+     *
+     * @param show_file_tree If true, include the file tree (left split).
+     * @param show_terminal If true, include the terminal (bottom split).
      */
-    void build_single_panel_layout();
+    void build_layout(bool show_file_tree, bool show_terminal);
 
     /**
      * @brief Queues an adaptive layout rebuild for after the current

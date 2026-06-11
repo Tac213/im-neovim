@@ -260,27 +260,69 @@ void LayerMainWindow::on_attach() {
     // --- Workspace-aware panel visibility ---
     // When no workspace folders are open, hide the file tree and
     // terminal by default to give nvim the full window.
+    // Manual View > File Tree / Terminal menu toggles override auto-hide
+    // via m_*_forced_visible.
     {
         std::weak_ptr<DockSpaceLayout> weak_dock{m_dock_layout};
-        auto update_panel_visibility = [this, weak_dock]() {
+        auto update_panel_visibility = [this]() {
             bool has_folders = !g_workspace.empty();
+
+            // Manual override takes priority; fall back to workspace state.
+            bool ft_vis = m_file_tree_forced_visible.value_or(has_folders);
+            bool t_vis = m_terminal_forced_visible.value_or(has_folders);
+
             if (m_file_tree) {
-                m_file_tree->set_visible(has_folders);
+                m_file_tree->set_visible(ft_vis);
             }
             if (m_terminal) {
-                m_terminal->set_visible(has_folders);
+                m_terminal->set_visible(t_vis);
             }
-            // Queue an adaptive layout rebuild so the dock nodes
-            // match the new visibility (single-panel vs 3-way split).
-            if (auto dock = weak_dock.lock()) {
-                dock->queue_adaptive_rebuild();
-            }
+
+            // Keep the dock layout checkmark bools in sync for the
+            // non-Darwin ImGui menu bar.
+            m_dock_layout->file_tree_visible = ft_vis;
+            m_dock_layout->terminal_visible = t_vis;
+            m_dock_layout->queue_adaptive_rebuild();
+
+#ifdef IM_APP_DARWIN
+            // Keep the native macOS menu item checkmarks in sync.
+            darwin_update_file_tree_menu_state(ft_vis);
+            darwin_update_terminal_menu_state(t_vis);
+#endif
         };
 
-        // Set initial visibility based on current workspace state.
-        if (g_workspace.empty()) {
-            update_panel_visibility();
+        // Wire View > File Tree / Terminal toggle signals.
+        // When the user toggles, flip the forced-visible optional.
+        // If the new value matches what auto-hide would do, clear the
+        // override (back to auto mode).
+        if (m_dock_layout) {
+            m_dock_layout->on_toggle_file_tree.connect(
+                [this, update_panel_visibility]() {
+                    bool has_folders = !g_workspace.empty();
+                    bool current =
+                        m_file_tree_forced_visible.value_or(has_folders);
+                    bool next = !current;
+                    m_file_tree_forced_visible =
+                        (next == has_folders) ? std::optional<bool>{}
+                                              : std::optional<bool>{next};
+                    update_panel_visibility();
+                });
+
+            m_dock_layout->on_toggle_terminal.connect(
+                [this, update_panel_visibility]() {
+                    bool has_folders = !g_workspace.empty();
+                    bool current =
+                        m_terminal_forced_visible.value_or(has_folders);
+                    bool next = !current;
+                    m_terminal_forced_visible = (next == has_folders)
+                                                    ? std::optional<bool>{}
+                                                    : std::optional<bool>{next};
+                    update_panel_visibility();
+                });
         }
+
+        // Set initial visibility and menu checkmark state.
+        update_panel_visibility();
 
         // Keep visibility in sync when workspace folders change.
         g_workspace.on_changed.connect(
@@ -324,6 +366,18 @@ void LayerMainWindow::on_attach() {
                 dock->on_new_window.emit();
             }
         });
+
+        ImNeovim::g_native_on_toggle_file_tree.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->on_toggle_file_tree.emit();
+            }
+        });
+
+        ImNeovim::g_native_on_toggle_terminal.connect([weak_dock]() {
+            if (auto dock = weak_dock.lock()) {
+                dock->on_toggle_terminal.emit();
+            }
+        });
     }
 #endif
 }
@@ -349,13 +403,11 @@ void LayerMainWindow::on_imgui_render() {
                                                 m_nvim->window_title(),
                                                 m_terminal->window_title());
 
-                // Build the appropriate layout based on workspace state.
-                // Empty workspace → nvim-only; otherwise 3-way split.
-                if (g_workspace.empty()) {
-                    m_dock_layout->build_single_panel_layout();
-                } else {
-                    m_dock_layout->build_default_layout();
-                }
+                // Build the appropriate layout based on visibility.
+                bool has_folders = !g_workspace.empty();
+                bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
+                bool show_t = m_terminal_forced_visible.value_or(has_folders);
+                m_dock_layout->build_layout(show_ft, show_t);
 
                 m_file_tree->set_dock_id(m_dock_layout->get_dock_id_for_zone(
                     DockSpaceLayout::Zone::FileTree));
@@ -391,28 +443,33 @@ void LayerMainWindow::on_imgui_render() {
         m_dock_layout->set_window_names(m_file_tree->window_title(),
                                         m_nvim->window_title(),
                                         m_terminal->window_title());
-        // Choose layout based on current workspace state.
-        if (g_workspace.empty()) {
-            m_dock_layout->build_single_panel_layout();
-        } else {
-            m_dock_layout->build_default_layout();
-        }
+        // Reset also clears any manual visibility overrides.
+        m_file_tree_forced_visible.reset();
+        m_terminal_forced_visible.reset();
+
+        // Choose layout based on current visibility state.
+        bool has_folders = !g_workspace.empty();
+        bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
+        bool show_t = m_terminal_forced_visible.value_or(has_folders);
+        m_dock_layout->build_layout(show_ft, show_t);
+
         // Re-assign dock IDs after reset
         _assign_dock_ids();
     }
 
-    // Handle pending adaptive rebuild (workspace added/removed)
+    // Handle pending adaptive rebuild (workspace / visibility changes)
     if (m_dock_layout && m_dock_layout->is_adaptive_rebuild_pending()) {
         m_dock_layout->clear_adaptive_rebuild_pending();
         // Update window names before rebuilding.
         m_dock_layout->set_window_names(m_file_tree->window_title(),
                                         m_nvim->window_title(),
                                         m_terminal->window_title());
-        if (g_workspace.empty()) {
-            m_dock_layout->build_single_panel_layout();
-        } else {
-            m_dock_layout->build_default_layout();
-        }
+
+        bool has_folders = !g_workspace.empty();
+        bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
+        bool show_t = m_terminal_forced_visible.value_or(has_folders);
+        m_dock_layout->build_layout(show_ft, show_t);
+
         _assign_dock_ids();
     }
 }

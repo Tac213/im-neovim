@@ -90,7 +90,7 @@ void DockSpaceLayout::render() {
 #ifndef IM_APP_DARWIN
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New Window", "Shift+Cmd+N")) {
+            if (ImGui::MenuItem("New Window", "Ctrl+Shift+N")) {
                 on_new_window.emit();
             }
             ImGui::Separator();
@@ -110,6 +110,14 @@ void DockSpaceLayout::render() {
             if (ImGui::MenuItem("Reset Layout")) {
                 // Queue a reset for after the frame completes
                 m_pending_reset = true;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("File Tree", "Ctrl+Shift+E",
+                                &file_tree_visible)) {
+                on_toggle_file_tree.emit();
+            }
+            if (ImGui::MenuItem("Terminal", "Ctrl+`", &terminal_visible)) {
+                on_toggle_terminal.emit();
             }
             ImGui::EndMenu();
         }
@@ -212,39 +220,88 @@ void DockSpaceLayout::_build_default_layout_internal() {
              m_dock_id_left, m_dock_id_right_top, m_dock_id_right_bottom);
 }
 
-void DockSpaceLayout::build_single_panel_layout() {
+void DockSpaceLayout::build_layout(bool show_file_tree, bool show_terminal) {
     if (!m_initialized) {
-        LOG_ERROR("Cannot build single-panel layout - DockSpaceLayout not "
-                  "initialized");
+        LOG_ERROR("Cannot build layout - DockSpaceLayout not initialized");
         return;
     }
 
-    LOG_INFO("Building single-panel (nvim-only) dock layout");
-
-    // Clear any existing layout
+    // Clear any existing layout first.
     ImGui::DockBuilderRemoveNodeChildNodes(m_dockspace_id);
 
-    // Dock only nvim into the central node – no splits, no side panels.
-    ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), m_dockspace_id);
+    if (!show_file_tree && !show_terminal) {
+        // --- Nvim only (no splits) ---
+        ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(),
+                                     m_dockspace_id);
+        ImGui::DockBuilderFinish(m_dockspace_id);
+        m_dock_id_left = 0;
+        m_dock_id_right_top = m_dockspace_id;
+        m_dock_id_right_bottom = 0;
 
-    ImGui::DockBuilderFinish(m_dockspace_id);
-
-    // Lock the nvim dock node: hide the close button and prevent undocking.
-    // In single-panel mode, nvim occupies the root dockspace node.
-    {
-        ImGuiDockNode* nvim_node = ImGui::DockBuilderGetNode(m_dockspace_id);
-        if (nvim_node != nullptr) {
-            nvim_node->LocalFlags |= g_nvim_lock_flags;
-            nvim_node->UpdateMergedFlags();
+        // Lock the nvim dock node: hide close button, prevent undocking.
+        if (m_dock_id_right_top != 0) {
+            ImGuiDockNode* nvim_node =
+                ImGui::DockBuilderGetNode(m_dock_id_right_top);
+            if (nvim_node != nullptr) {
+                nvim_node->LocalFlags |= g_nvim_lock_flags;
+                nvim_node->UpdateMergedFlags();
+            }
         }
+
+        LOG_INFO("Layout built: nvim-only");
+
+    } else if (show_file_tree && !show_terminal) {
+        // --- File tree (left) + nvim (right) ---
+        ImGuiID left_id, right_id;
+        ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left,
+                                    g_default_left_ratio, &left_id, &right_id);
+        ImGui::DockBuilderDockWindow(m_file_tree_window_name.c_str(), left_id);
+        ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), right_id);
+        ImGui::DockBuilderFinish(m_dockspace_id);
+        m_dock_id_left = left_id;
+        m_dock_id_right_top = right_id;
+        m_dock_id_right_bottom = 0;
+
+        // Lock the nvim dock node: hide close button, prevent undocking.
+        if (m_dock_id_right_top != 0) {
+            ImGuiDockNode* nvim_node =
+                ImGui::DockBuilderGetNode(m_dock_id_right_top);
+            if (nvim_node != nullptr) {
+                nvim_node->LocalFlags |= g_nvim_lock_flags;
+                nvim_node->UpdateMergedFlags();
+            }
+        }
+
+        LOG_INFO("Layout built: file-tree + nvim");
+
+    } else if (!show_file_tree && show_terminal) {
+        // --- Nvim (top) + terminal (bottom) ---
+        ImGuiID top_id, bottom_id;
+        ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up,
+                                    g_default_top_ratio, &top_id, &bottom_id);
+        ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), top_id);
+        ImGui::DockBuilderDockWindow(m_terminal_window_name.c_str(), bottom_id);
+        ImGui::DockBuilderFinish(m_dockspace_id);
+        m_dock_id_left = 0;
+        m_dock_id_right_top = top_id;
+        m_dock_id_right_bottom = bottom_id;
+
+        // Lock the nvim dock node: hide close button, prevent undocking.
+        if (m_dock_id_right_top != 0) {
+            ImGuiDockNode* nvim_node =
+                ImGui::DockBuilderGetNode(m_dock_id_right_top);
+            if (nvim_node != nullptr) {
+                nvim_node->LocalFlags |= g_nvim_lock_flags;
+                nvim_node->UpdateMergedFlags();
+            }
+        }
+
+        LOG_INFO("Layout built: nvim + terminal");
+
+    } else {
+        // --- Full 3-way split ---
+        _build_default_layout_internal();
     }
-
-    // File tree and terminal zones are unused in this layout.
-    m_dock_id_left = 0;
-    m_dock_id_right_top = m_dockspace_id;
-    m_dock_id_right_bottom = 0;
-
-    LOG_INFO("Single-panel layout built - Nvim dock: {}", m_dockspace_id);
 }
 
 void DockSpaceLayout::_clear_dock_nodes() {
