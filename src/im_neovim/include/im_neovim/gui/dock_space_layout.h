@@ -179,6 +179,10 @@ class DockSpaceLayout {
     void _build_default_layout_internal();
     void _clear_dock_nodes();
     bool _is_persisted_layout_available() const;
+
+    /// Ensures ImGuiDockNodeFlags_NoCloseButton is set on the nvim dock node.
+    /// Idempotent — safe to call every frame.
+    void _ensure_nvim_no_close_button();
 };
 
 } // namespace ImNeovim

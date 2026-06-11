@@ -3,6 +3,15 @@
 #include "im_neovim/logging.h"
 #include <imgui_internal.h>
 
+namespace {
+
+/// Flags applied to the nvim dock node: no close button, no undocking.
+constexpr ImGuiDockNodeFlags g_nvim_lock_flags =
+    static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_NoCloseButton) |
+    static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_NoUndocking);
+
+} // namespace
+
 namespace ImNeovim {
 
 DockSpaceLayout::DockSpaceLayout() = default;
@@ -124,6 +133,11 @@ void DockSpaceLayout::render() {
 
     ImGui::End();
 
+    // Ensure the nvim dock node never shows a close button, even when
+    // the layout was loaded from persistence (ini) rather than built
+    // by DockBuilder.
+    _ensure_nvim_no_close_button();
+
     // Build default layout on first frame if needed
     // We do this after the dockspace is submitted so ImGui has initialized the
     // dock nodes
@@ -184,6 +198,16 @@ void DockSpaceLayout::_build_default_layout_internal() {
     // Finish building the dock layout
     ImGui::DockBuilderFinish(m_dockspace_id);
 
+    // Lock the nvim dock node: hide the close button and prevent undocking.
+    if (m_dock_id_right_top != 0) {
+        ImGuiDockNode* nvim_node =
+            ImGui::DockBuilderGetNode(m_dock_id_right_top);
+        if (nvim_node != nullptr) {
+            nvim_node->LocalFlags |= g_nvim_lock_flags;
+            nvim_node->UpdateMergedFlags();
+        }
+    }
+
     LOG_INFO("Default layout built - Left: {}, TopRight: {}, BottomRight: {}",
              m_dock_id_left, m_dock_id_right_top, m_dock_id_right_bottom);
 }
@@ -204,6 +228,16 @@ void DockSpaceLayout::build_single_panel_layout() {
     ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), m_dockspace_id);
 
     ImGui::DockBuilderFinish(m_dockspace_id);
+
+    // Lock the nvim dock node: hide the close button and prevent undocking.
+    // In single-panel mode, nvim occupies the root dockspace node.
+    {
+        ImGuiDockNode* nvim_node = ImGui::DockBuilderGetNode(m_dockspace_id);
+        if (nvim_node != nullptr) {
+            nvim_node->LocalFlags |= g_nvim_lock_flags;
+            nvim_node->UpdateMergedFlags();
+        }
+    }
 
     // File tree and terminal zones are unused in this layout.
     m_dock_id_left = 0;
@@ -268,6 +302,32 @@ ImGuiID DockSpaceLayout::get_dock_id_for_zone(Zone zone) const {
         return m_dock_id_right_bottom;
     default:
         return 0;
+    }
+}
+
+void DockSpaceLayout::_ensure_nvim_no_close_button() {
+    ImGuiID node_id = m_dock_id_right_top;
+
+    // If we don't have a cached nvim node ID (e.g. layout loaded from
+    // a persisted ini that predates this feature), try to discover it
+    // by finding the nvim window via its last-known name.
+    if (node_id == 0) {
+        ImGuiWindow* nvim_win =
+            ImGui::FindWindowByName(m_nvim_window_name.c_str());
+        if (nvim_win != nullptr && nvim_win->DockNode != nullptr) {
+            node_id = nvim_win->DockNode->ID;
+            m_dock_id_right_top = node_id; // Cache for subsequent frames
+        }
+    }
+
+    if (node_id == 0) {
+        return; // Nvim window not yet docked — try again next frame
+    }
+
+    ImGuiDockNode* node = ImGui::DockBuilderGetNode(node_id);
+    if (node != nullptr) {
+        node->LocalFlags |= g_nvim_lock_flags;
+        node->UpdateMergedFlags();
     }
 }
 
