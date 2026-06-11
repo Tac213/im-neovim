@@ -46,5 +46,6 @@ class LayerMainWindow : public ImApp::Layer {
     void _show_exit_modal();
     void _render_exit_modal();
     void _handle_exit_decision(bool save, bool discard);
+    void _assign_dock_ids();
 };
 } // namespace ImNeovim

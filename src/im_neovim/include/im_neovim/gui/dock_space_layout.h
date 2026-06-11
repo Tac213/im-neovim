@@ -2,6 +2,7 @@
 
 #include "im_neovim/signal.h"
 #include <imgui.h>
+#include <string>
 
 namespace ImNeovim {
 
@@ -117,9 +118,44 @@ class DockSpaceLayout {
     /// Emitted when View > Reset Layout is clicked.
     Signal<> on_reset_layout;
 
+    /**
+     * @brief Sets the window names used by DockBuilderDockWindow when
+     * building the default layout. Call before build_default_layout() or
+     * reset_to_default().
+     */
+    void set_window_names(const std::string& file_tree, const std::string& nvim,
+                          const std::string& terminal) {
+        m_file_tree_window_name = file_tree;
+        m_nvim_window_name = nvim;
+        m_terminal_window_name = terminal;
+    }
+
+    /**
+     * @brief Builds a single-panel layout (nvim only, no splits).
+     *
+     * Used when the workspace is empty and the file tree / terminal
+     * panels are hidden, so that their dock nodes don't reserve
+     * blank space.
+     */
+    void build_single_panel_layout();
+
+    /**
+     * @brief Queues an adaptive layout rebuild for after the current
+     * frame. The rebuild chooses single-panel or 3-way-split based on
+     * whether g_workspace has folders.
+     */
+    void queue_adaptive_rebuild() { m_pending_adaptive_rebuild = true; }
+    bool is_adaptive_rebuild_pending() const {
+        return m_pending_adaptive_rebuild;
+    }
+    void clear_adaptive_rebuild_pending() {
+        m_pending_adaptive_rebuild = false;
+    }
+
   private:
     bool m_initialized{false};
     bool m_pending_reset{false};
+    bool m_pending_adaptive_rebuild{false};
     ImGuiID m_dockspace_id{0};
     ImGuiViewport* m_main_viewport{nullptr};
 
@@ -127,6 +163,11 @@ class DockSpaceLayout {
     ImGuiID m_dock_id_left{0};         // FileTree
     ImGuiID m_dock_id_right_top{0};    // Nvim
     ImGuiID m_dock_id_right_bottom{0}; // Terminal
+
+    // Window names for docking (matching widget defaults)
+    std::string m_file_tree_window_name{"File Tree"};
+    std::string m_nvim_window_name{"nvim (no file)"};
+    std::string m_terminal_window_name{"Terminal"};
 
     // Default layout ratios
     static constexpr float g_default_left_ratio = 0.20f;

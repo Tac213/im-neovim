@@ -257,6 +257,36 @@ void LayerMainWindow::on_attach() {
         });
     }
 
+    // --- Workspace-aware panel visibility ---
+    // When no workspace folders are open, hide the file tree and
+    // terminal by default to give nvim the full window.
+    {
+        std::weak_ptr<DockSpaceLayout> weak_dock{m_dock_layout};
+        auto update_panel_visibility = [this, weak_dock]() {
+            bool has_folders = !g_workspace.empty();
+            if (m_file_tree) {
+                m_file_tree->set_visible(has_folders);
+            }
+            if (m_terminal) {
+                m_terminal->set_visible(has_folders);
+            }
+            // Queue an adaptive layout rebuild so the dock nodes
+            // match the new visibility (single-panel vs 3-way split).
+            if (auto dock = weak_dock.lock()) {
+                dock->queue_adaptive_rebuild();
+            }
+        };
+
+        // Set initial visibility based on current workspace state.
+        if (g_workspace.empty()) {
+            update_panel_visibility();
+        }
+
+        // Keep visibility in sync when workspace folders change.
+        g_workspace.on_changed.connect(
+            [update_panel_visibility]() { update_panel_visibility(); });
+    }
+
     // On macOS, wire up the native menu bar so it emits the same dock
     // layout signals that the ImGui menu bar uses on other platforms.
 #ifdef IM_APP_DARWIN
@@ -313,6 +343,20 @@ void LayerMainWindow::on_imgui_render() {
 
             // On first render, set up the dock IDs for each widget
             if (first_render) {
+                // Tell the dock layout the current window names so that
+                // DockBuilderDockWindow can place them correctly.
+                m_dock_layout->set_window_names(m_file_tree->window_title(),
+                                                m_nvim->window_title(),
+                                                m_terminal->window_title());
+
+                // Build the appropriate layout based on workspace state.
+                // Empty workspace → nvim-only; otherwise 3-way split.
+                if (g_workspace.empty()) {
+                    m_dock_layout->build_single_panel_layout();
+                } else {
+                    m_dock_layout->build_default_layout();
+                }
+
                 m_file_tree->set_dock_id(m_dock_layout->get_dock_id_for_zone(
                     DockSpaceLayout::Zone::FileTree));
                 m_nvim->set_dock_id(m_dock_layout->get_dock_id_for_zone(
@@ -342,16 +386,45 @@ void LayerMainWindow::on_imgui_render() {
     // Handle pending layout reset after all rendering is done
     if (m_dock_layout && m_dock_layout->is_reset_pending()) {
         m_dock_layout->clear_reset_pending();
-        m_dock_layout->reset_to_default(false);
+        // Update window names before rebuilding so that
+        // DockBuilderDockWindow targets the current window titles.
+        m_dock_layout->set_window_names(m_file_tree->window_title(),
+                                        m_nvim->window_title(),
+                                        m_terminal->window_title());
+        // Choose layout based on current workspace state.
+        if (g_workspace.empty()) {
+            m_dock_layout->build_single_panel_layout();
+        } else {
+            m_dock_layout->build_default_layout();
+        }
         // Re-assign dock IDs after reset
-        m_file_tree->set_dock_id(m_dock_layout->get_dock_id_for_zone(
-            DockSpaceLayout::Zone::FileTree));
-        m_nvim->set_dock_id(
-            m_dock_layout->get_dock_id_for_zone(DockSpaceLayout::Zone::Nvim));
-        m_terminal->set_dock_id(m_dock_layout->get_dock_id_for_zone(
-            DockSpaceLayout::Zone::Terminal));
+        _assign_dock_ids();
+    }
+
+    // Handle pending adaptive rebuild (workspace added/removed)
+    if (m_dock_layout && m_dock_layout->is_adaptive_rebuild_pending()) {
+        m_dock_layout->clear_adaptive_rebuild_pending();
+        // Update window names before rebuilding.
+        m_dock_layout->set_window_names(m_file_tree->window_title(),
+                                        m_nvim->window_title(),
+                                        m_terminal->window_title());
+        if (g_workspace.empty()) {
+            m_dock_layout->build_single_panel_layout();
+        } else {
+            m_dock_layout->build_default_layout();
+        }
+        _assign_dock_ids();
     }
 }
+void LayerMainWindow::_assign_dock_ids() {
+    m_file_tree->set_dock_id(
+        m_dock_layout->get_dock_id_for_zone(DockSpaceLayout::Zone::FileTree));
+    m_nvim->set_dock_id(
+        m_dock_layout->get_dock_id_for_zone(DockSpaceLayout::Zone::Nvim));
+    m_terminal->set_dock_id(
+        m_dock_layout->get_dock_id_for_zone(DockSpaceLayout::Zone::Terminal));
+}
+
 // --- Exit confirmation modal ---
 
 bool LayerMainWindow::on_exit_requested() {

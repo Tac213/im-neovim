@@ -173,16 +173,44 @@ void DockSpaceLayout::_build_default_layout_internal() {
     m_dock_id_right_top = top_right_id;
     m_dock_id_right_bottom = bottom_right_id;
 
-    // Set window class for each zone to guide windows to dock there by default
-    // This helps with initial docking behavior
-    ImGuiWindowClass window_class;
-    window_class.DockingAllowUnclassed = true;
+    // Dock each window into its assigned node so that the split layout
+    // is populated even when ImGuiCond_FirstUseEver won't re-trigger
+    // (e.g. after a reset that doesn't clear .ini persistence).
+    ImGui::DockBuilderDockWindow(m_file_tree_window_name.c_str(), left_id);
+    ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), top_right_id);
+    ImGui::DockBuilderDockWindow(m_terminal_window_name.c_str(),
+                                 bottom_right_id);
 
     // Finish building the dock layout
     ImGui::DockBuilderFinish(m_dockspace_id);
 
     LOG_INFO("Default layout built - Left: {}, TopRight: {}, BottomRight: {}",
              m_dock_id_left, m_dock_id_right_top, m_dock_id_right_bottom);
+}
+
+void DockSpaceLayout::build_single_panel_layout() {
+    if (!m_initialized) {
+        LOG_ERROR("Cannot build single-panel layout - DockSpaceLayout not "
+                  "initialized");
+        return;
+    }
+
+    LOG_INFO("Building single-panel (nvim-only) dock layout");
+
+    // Clear any existing layout
+    ImGui::DockBuilderRemoveNodeChildNodes(m_dockspace_id);
+
+    // Dock only nvim into the central node – no splits, no side panels.
+    ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), m_dockspace_id);
+
+    ImGui::DockBuilderFinish(m_dockspace_id);
+
+    // File tree and terminal zones are unused in this layout.
+    m_dock_id_left = 0;
+    m_dock_id_right_top = m_dockspace_id;
+    m_dock_id_right_bottom = 0;
+
+    LOG_INFO("Single-panel layout built - Nvim dock: {}", m_dockspace_id);
 }
 
 void DockSpaceLayout::_clear_dock_nodes() {
