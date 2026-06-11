@@ -53,5 +53,43 @@ class LayerMainWindow : public ImApp::Layer {
     void _render_exit_modal();
     void _handle_exit_decision(bool save, bool discard);
     void _assign_dock_ids();
+
+    // --- Signal handlers ---
+
+    /// File tree: open a clicked file in nvim.
+    void _on_file_clicked(const std::filesystem::path& path);
+
+    /// File tree: remove a workspace folder (right-click action).
+    void _on_remove_folder(const std::filesystem::path& path);
+
+    /// File > Exit / native Close Window.
+    void _on_exit();
+
+    /// File > New Window: spawn a detached imnvim process.
+    void _on_new_window();
+
+    /// Help > About: show the about panel.
+    void _on_about();
+
+    /// File > Open Folder...: replace workspace with a picked folder.
+    void _open_folder();
+
+    /// File > Add Folder to Workspace...: append a picked folder.
+    void _add_folder_to_workspace();
+
+    /// Keep nvim's :cd in sync with the first workspace folder.
+    void _sync_nvim_cwd();
+
+    /// Update file-tree / terminal visibility and menu checkmarks.
+    void _update_panel_visibility();
+
+    /// View > File Tree toggle.
+    void _toggle_file_tree();
+
+    /// View > Terminal toggle.
+    void _toggle_terminal();
+
+    /// View > Reset Layout (native menu path).
+    void _on_reset_layout();
 };
 } // namespace ImNeovim

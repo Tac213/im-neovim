@@ -30,39 +30,8 @@ void LayerInstanceManager::on_attach() {
     _rebind_ipc();
 
     // Listen for workspace changes so we can rebind the lock/IPC.
-    m_workspace_changed_conn = g_workspace.on_changed.connect([this]() {
-        std::string new_key = g_workspace.derive_instance_key();
-
-        if (new_key == m_instance_key) {
-            return; // No change.
-        }
-
-        LOG_INFO("Workspace changed - rebinding instance lock from '{}' to "
-                 "'{}'",
-                 m_instance_key, new_key);
-
-        // Release old resources.
-        m_ipc.reset();
-        m_lock.reset();
-
-        m_instance_key = new_key;
-
-        if (m_instance_key.empty()) {
-            // Workspace became empty — no locking needed.
-            m_is_primary = true;
-            return;
-        }
-
-        _acquire_lock(m_instance_key);
-        if (m_is_primary) {
-            _rebind_ipc();
-        }
-        // If !m_is_primary, the lock acquisition already sent an
-        // activate message to the existing instance.  This instance
-        // should probably exit — but for now we continue as primary
-        // since we already have the window open.
-        m_is_primary = true;
-    });
+    m_workspace_changed_conn = g_workspace.on_changed.connect(
+        std::bind_front(&LayerInstanceManager::_on_workspace_changed, this));
 }
 
 void LayerInstanceManager::on_update() {
@@ -160,6 +129,40 @@ void LayerInstanceManager::_handle_ipc_message(const std::string& message) {
     // Fallback: treat as plain activate.
     LOG_INFO("Received remote activate request for key: {}", m_instance_key);
     m_pending_activate.store(true);
+}
+
+void LayerInstanceManager::_on_workspace_changed() {
+    std::string new_key = g_workspace.derive_instance_key();
+
+    if (new_key == m_instance_key) {
+        return; // No change.
+    }
+
+    LOG_INFO("Workspace changed - rebinding instance lock from '{}' to "
+             "'{}'",
+             m_instance_key, new_key);
+
+    // Release old resources.
+    m_ipc.reset();
+    m_lock.reset();
+
+    m_instance_key = new_key;
+
+    if (m_instance_key.empty()) {
+        // Workspace became empty — no locking needed.
+        m_is_primary = true;
+        return;
+    }
+
+    _acquire_lock(m_instance_key);
+    if (m_is_primary) {
+        _rebind_ipc();
+    }
+    // If !m_is_primary, the lock acquisition already sent an
+    // activate message to the existing instance.  This instance
+    // should probably exit — but for now we continue as primary
+    // since we already have the window open.
+    m_is_primary = true;
 }
 
 } // namespace ImNeovim

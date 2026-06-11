@@ -47,6 +47,9 @@ class LayerInstanceManager : public ImApp::Layer {
     void _acquire_lock(const std::string& key);
     void _release_lock();
     void _rebind_ipc();
+
+    /// React to workspace changes: rebind instance lock and IPC.
+    void _on_workspace_changed();
 };
 
 } // namespace ImNeovim

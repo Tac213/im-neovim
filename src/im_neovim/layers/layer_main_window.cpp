@@ -111,274 +111,69 @@ void LayerMainWindow::on_attach() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigWindowsMoveFromTitleBarOnly = true;
 
-    // Connect signals.
+    // File tree signals
     if (m_file_tree && m_nvim) {
-        std::weak_ptr<NvimWidget> weak_nvim{m_nvim};
         m_file_tree->file_clicked.connect(
-            [weak_nvim](const std::filesystem::path& path) {
-                if (auto nvim = weak_nvim.lock()) {
-                    nvim->open_file(path);
-                }
-            });
+            std::bind_front(&LayerMainWindow::_on_file_clicked, this));
     }
-
-    // Helper: open a folder picker and add the selected folder to the
-    // workspace.  Used by both the menu action and the empty-state
-    // button in the file tree.
-    auto add_folder_dialog = []() {
-#ifdef IM_APP_WIN32
-        // Start the dialog at the first workspace folder (or home).
-        std::filesystem::path start_dir = g_workspace.first_folder_or_home();
-        const wchar_t* selected_w = tinyfd_selectFolderDialogW(
-            L"Add Folder to Workspace", start_dir.c_str());
-        if (selected_w == nullptr) {
-            return; // User cancelled
-        }
-        std::filesystem::path selected_path{selected_w};
-#else
-        std::filesystem::path start_dir = g_workspace.first_folder_or_home();
-        std::string start_str = ImApp::path_to_string(start_dir);
-        const char* selected = tinyfd_selectFolderDialog(
-            "Add Folder to Workspace", start_str.c_str());
-        if (selected == nullptr) {
-            return; // User cancelled
-        }
-        std::filesystem::path selected_path{selected};
-#endif
-        g_workspace.add_folder(selected_path);
-    };
-
-    // File tree signals.
     if (m_file_tree) {
-        // Empty-state "Open Folder" button.
-        m_file_tree->on_open_folder_requested.connect(add_folder_dialog);
-
-        // Right-click "Remove Folder from Workspace".
+        m_file_tree->on_open_folder_requested.connect(
+            std::bind_front(&LayerMainWindow::_add_folder_to_workspace, this));
         m_file_tree->on_remove_folder_requested.connect(
-            [](const std::filesystem::path& path) {
-                g_workspace.remove_folder(path);
-            });
+            std::bind_front(&LayerMainWindow::_on_remove_folder, this));
     }
 
-    // Connect menu action signals from the dock layout.
+    // Dock layout menu action signals
     if (m_dock_layout) {
-        // File > Exit
-        m_dock_layout->on_exit.connect([]() { IM_APP.request_exit(); });
-
-        // File > New Window — spawn a detached imnvim process.
-        m_dock_layout->on_new_window.connect([]() {
-            std::string exe_path =
-                ImApp::path_to_string(ImApp::FileSystem::executable_path());
-            if (!spawn_new_window(exe_path)) {
-                LOG_ERROR("Failed to spawn new window: {}", exe_path);
-            }
-        });
-
-        // Help > About
-        std::weak_ptr<AboutPanel> weak_about_panel{m_about_panel};
-        m_dock_layout->on_about.connect([weak_about_panel]() {
-            if (auto about_panel = weak_about_panel.lock()) {
-                about_panel->show();
-            }
-        });
-
-        // File > Open Folder... — replaces the workspace with a single folder.
-        auto open_folder_dialog = []() {
-#ifdef IM_APP_WIN32
-            std::filesystem::path start_dir =
-                g_workspace.first_folder_or_home();
-            const wchar_t* selected_w =
-                tinyfd_selectFolderDialogW(L"Open Folder", start_dir.c_str());
-            if (selected_w == nullptr) {
-                return;
-            }
-            std::filesystem::path selected_path{selected_w};
-#else
-            std::filesystem::path start_dir =
-                g_workspace.first_folder_or_home();
-            std::string start_str = ImApp::path_to_string(start_dir);
-            const char* selected =
-                tinyfd_selectFolderDialog("Open Folder", start_str.c_str());
-            if (selected == nullptr) {
-                return;
-            }
-            std::filesystem::path selected_path{selected};
-#endif
-            // If another instance already has this folder as its sole
-            // workspace folder, activate it instead.
-            std::filesystem::path abs_path =
-                std::filesystem::weakly_canonical(selected_path);
-            std::string key = "ImNeovim:" + ImApp::path_to_string(abs_path);
-            key = std::to_string(std::hash<std::string>{}(key));
-
-            auto ipc = ImApp::IpcChannel::create();
-            if (ipc->send_message(key, "")) {
-                return; // Existing instance activated.
-            }
-
-            // Replace the workspace with the selected folder.
-            g_workspace.replace_with(selected_path);
-        };
-        m_dock_layout->on_open_folder.connect(open_folder_dialog);
-
-        // File > Add Folder to Workspace...
-        m_dock_layout->on_add_folder_to_workspace.connect(add_folder_dialog);
+        m_dock_layout->on_exit.connect(
+            std::bind_front(&LayerMainWindow::_on_exit, this));
+        m_dock_layout->on_new_window.connect(
+            std::bind_front(&LayerMainWindow::_on_new_window, this));
+        m_dock_layout->on_about.connect(
+            std::bind_front(&LayerMainWindow::_on_about, this));
+        m_dock_layout->on_open_folder.connect(
+            std::bind_front(&LayerMainWindow::_open_folder, this));
+        m_dock_layout->on_add_folder_to_workspace.connect(
+            std::bind_front(&LayerMainWindow::_add_folder_to_workspace, this));
+        m_dock_layout->on_toggle_file_tree.connect(
+            std::bind_front(&LayerMainWindow::_toggle_file_tree, this));
+        m_dock_layout->on_toggle_terminal.connect(
+            std::bind_front(&LayerMainWindow::_toggle_terminal, this));
     }
 
     // Keep nvim's working directory in sync with the first workspace folder.
-    {
-        std::weak_ptr<NvimWidget> weak_nvim{m_nvim};
-        g_workspace.on_changed.connect([weak_nvim]() {
-            auto nvim = weak_nvim.lock();
-            if (!nvim) {
-                return;
-            }
+    g_workspace.on_changed.connect(
+        std::bind_front(&LayerMainWindow::_sync_nvim_cwd, this));
 
-            std::filesystem::path cwd = g_workspace.first_folder_or_home();
-            std::string path = ImApp::path_to_string(cwd);
-            std::replace(path.begin(), path.end(), '\\', '/');
-            std::string cmd = "cd " + path;
-
-            auto request = nvim->start_nvim_request(
-                "nvim_command", 1,
-                [](msgpack::object&) {
-                    // :cd succeeded — Neovim will emit a chdir redraw
-                    // event that updates the internal cwd tracking.
-                },
-                [](int32_t error_code, const std::string& error_msg) {
-                    LOG_ERROR("Failed to change directory: {} - {}", error_code,
-                              error_msg);
-                });
-
-            if (request) {
-                request->arg_str(cmd.size());
-                request->arg_str_body(cmd.data(), cmd.size());
-            }
-        });
-    }
-
-    // --- Workspace-aware panel visibility ---
+    // Workspace-aware panel visibility.
     // When no workspace folders are open, hide the file tree and
     // terminal by default to give nvim the full window.
     // Manual View > File Tree / Terminal menu toggles override auto-hide
     // via m_*_forced_visible.
-    {
-        std::weak_ptr<DockSpaceLayout> weak_dock{m_dock_layout};
-        auto update_panel_visibility = [this]() {
-            bool has_folders = !g_workspace.empty();
+    g_workspace.on_changed.connect(
+        std::bind_front(&LayerMainWindow::_update_panel_visibility, this));
+    _update_panel_visibility();
 
-            // Manual override takes priority; fall back to workspace state.
-            bool ft_vis = m_file_tree_forced_visible.value_or(has_folders);
-            bool t_vis = m_terminal_forced_visible.value_or(has_folders);
-
-            if (m_file_tree) {
-                m_file_tree->set_visible(ft_vis);
-            }
-            if (m_terminal) {
-                m_terminal->set_visible(t_vis);
-            }
-
-            // Keep the dock layout checkmark bools in sync for the
-            // non-Darwin ImGui menu bar.
-            m_dock_layout->file_tree_visible = ft_vis;
-            m_dock_layout->terminal_visible = t_vis;
-            m_dock_layout->queue_adaptive_rebuild();
-
+    // On macOS, wire up the native menu bar.
 #ifdef IM_APP_DARWIN
-            // Keep the native macOS menu item checkmarks in sync.
-            darwin_update_file_tree_menu_state(ft_vis);
-            darwin_update_terminal_menu_state(t_vis);
-#endif
-        };
+    ImNeovim::darwin_setup_native_menus();
 
-        // Wire View > File Tree / Terminal toggle signals.
-        // When the user toggles, flip the forced-visible optional.
-        // If the new value matches what auto-hide would do, clear the
-        // override (back to auto mode).
-        if (m_dock_layout) {
-            m_dock_layout->on_toggle_file_tree.connect(
-                [this, update_panel_visibility]() {
-                    bool has_folders = !g_workspace.empty();
-                    bool current =
-                        m_file_tree_forced_visible.value_or(has_folders);
-                    bool next = !current;
-                    m_file_tree_forced_visible =
-                        (next == has_folders) ? std::optional<bool>{}
-                                              : std::optional<bool>{next};
-                    update_panel_visibility();
-                });
-
-            m_dock_layout->on_toggle_terminal.connect(
-                [this, update_panel_visibility]() {
-                    bool has_folders = !g_workspace.empty();
-                    bool current =
-                        m_terminal_forced_visible.value_or(has_folders);
-                    bool next = !current;
-                    m_terminal_forced_visible = (next == has_folders)
-                                                    ? std::optional<bool>{}
-                                                    : std::optional<bool>{next};
-                    update_panel_visibility();
-                });
-        }
-
-        // Set initial visibility and menu checkmark state.
-        update_panel_visibility();
-
-        // Keep visibility in sync when workspace folders change.
-        g_workspace.on_changed.connect(
-            [update_panel_visibility]() { update_panel_visibility(); });
-    }
-
-    // On macOS, wire up the native menu bar so it emits the same dock
-    // layout signals that the ImGui menu bar uses on other platforms.
-#ifdef IM_APP_DARWIN
-    {
-        ImNeovim::darwin_setup_native_menus();
-
-        std::weak_ptr<DockSpaceLayout> weak_dock{m_dock_layout};
-        ImNeovim::g_native_on_open_folder.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->on_open_folder.emit();
-            }
-        });
-        ImNeovim::g_native_on_add_folder_to_workspace.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->on_add_folder_to_workspace.emit();
-            }
-        });
-        ImNeovim::g_native_on_about.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->on_about.emit();
-            }
-        });
-        ImNeovim::g_native_on_reset_layout.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->queue_reset();
-            }
-        });
-        ImNeovim::g_native_on_exit.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->on_exit.emit();
-            }
-        });
-        ImNeovim::g_native_on_new_window.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->on_new_window.emit();
-            }
-        });
-
-        ImNeovim::g_native_on_toggle_file_tree.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->on_toggle_file_tree.emit();
-            }
-        });
-
-        ImNeovim::g_native_on_toggle_terminal.connect([weak_dock]() {
-            if (auto dock = weak_dock.lock()) {
-                dock->on_toggle_terminal.emit();
-            }
-        });
-    }
+    ImNeovim::g_native_on_open_folder.connect(
+        std::bind_front(&LayerMainWindow::_open_folder, this));
+    ImNeovim::g_native_on_add_folder_to_workspace.connect(
+        std::bind_front(&LayerMainWindow::_add_folder_to_workspace, this));
+    ImNeovim::g_native_on_about.connect(
+        std::bind_front(&LayerMainWindow::_on_about, this));
+    ImNeovim::g_native_on_reset_layout.connect(
+        std::bind_front(&LayerMainWindow::_on_reset_layout, this));
+    ImNeovim::g_native_on_exit.connect(
+        std::bind_front(&LayerMainWindow::_on_exit, this));
+    ImNeovim::g_native_on_new_window.connect(
+        std::bind_front(&LayerMainWindow::_on_new_window, this));
+    ImNeovim::g_native_on_toggle_file_tree.connect(
+        std::bind_front(&LayerMainWindow::_toggle_file_tree, this));
+    ImNeovim::g_native_on_toggle_terminal.connect(
+        std::bind_front(&LayerMainWindow::_toggle_terminal, this));
 #endif
 }
 
@@ -579,5 +374,169 @@ void LayerMainWindow::_render_exit_modal() {
         ImGui::EndPopup();
     }
 }
+
+// --- Signal handlers ---
+
+void LayerMainWindow::_on_file_clicked(const std::filesystem::path& path) {
+    m_nvim->open_file(path);
+}
+
+void LayerMainWindow::
+    _on_remove_folder( // NOLINT(readability-convert-member-functions-to-static)
+        const std::filesystem::path& path) {
+    g_workspace.remove_folder(path);
+}
+
+void LayerMainWindow::
+    _on_exit() { // NOLINT(readability-convert-member-functions-to-static)
+    IM_APP.request_exit();
+}
+
+void LayerMainWindow::
+    _on_new_window() { // NOLINT(readability-convert-member-functions-to-static)
+    std::string exe_path =
+        ImApp::path_to_string(ImApp::FileSystem::executable_path());
+    if (!spawn_new_window(exe_path)) {
+        LOG_ERROR("Failed to spawn new window: {}", exe_path);
+    }
+}
+
+void LayerMainWindow::_on_about() { m_about_panel->show(); }
+
+void LayerMainWindow::
+    _open_folder() { // NOLINT(readability-convert-member-functions-to-static)
+#ifdef IM_APP_WIN32
+    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    const wchar_t* selected_w =
+        tinyfd_selectFolderDialogW(L"Open Folder", start_dir.c_str());
+    if (selected_w == nullptr) {
+        return;
+    }
+    std::filesystem::path selected_path{selected_w};
+#else
+    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    std::string start_str = ImApp::path_to_string(start_dir);
+    const char* selected =
+        tinyfd_selectFolderDialog("Open Folder", start_str.c_str());
+    if (selected == nullptr) {
+        return;
+    }
+    std::filesystem::path selected_path{selected};
+#endif
+    // If another instance already has this folder as its sole
+    // workspace folder, activate it instead.
+    std::filesystem::path abs_path =
+        std::filesystem::weakly_canonical(selected_path);
+    std::string key = "ImNeovim:" + ImApp::path_to_string(abs_path);
+    key = std::to_string(std::hash<std::string>{}(key));
+
+    auto ipc = ImApp::IpcChannel::create();
+    if (ipc->send_message(key, "")) {
+        return; // Existing instance activated.
+    }
+
+    // Replace the workspace with the selected folder.
+    g_workspace.replace_with(selected_path);
+}
+
+void LayerMainWindow::
+    _add_folder_to_workspace() { // NOLINT(readability-convert-member-functions-to-static)
+#ifdef IM_APP_WIN32
+    // Start the dialog at the first workspace folder (or home).
+    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    const wchar_t* selected_w = tinyfd_selectFolderDialogW(
+        L"Add Folder to Workspace", start_dir.c_str());
+    if (selected_w == nullptr) {
+        return; // User cancelled
+    }
+    std::filesystem::path selected_path{selected_w};
+#else
+    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    std::string start_str = ImApp::path_to_string(start_dir);
+    const char* selected =
+        tinyfd_selectFolderDialog("Add Folder to Workspace", start_str.c_str());
+    if (selected == nullptr) {
+        return; // User cancelled
+    }
+    std::filesystem::path selected_path{selected};
+#endif
+    g_workspace.add_folder(selected_path);
+}
+
+void LayerMainWindow::_sync_nvim_cwd() {
+    if (!m_nvim) {
+        return;
+    }
+
+    std::filesystem::path cwd = g_workspace.first_folder_or_home();
+    std::string path = ImApp::path_to_string(cwd);
+    std::replace(path.begin(), path.end(), '\\', '/');
+    std::string cmd = "cd " + path;
+
+    auto request = m_nvim->start_nvim_request(
+        "nvim_command", 1,
+        [](msgpack::object&) {
+            // :cd succeeded — Neovim will emit a chdir redraw
+            // event that updates the internal cwd tracking.
+        },
+        [](int32_t error_code, const std::string& error_msg) {
+            LOG_ERROR("Failed to change directory: {} - {}", error_code,
+                      error_msg);
+        });
+
+    if (request) {
+        request->arg_str(cmd.size());
+        request->arg_str_body(cmd.data(), cmd.size());
+    }
+}
+
+void LayerMainWindow::_update_panel_visibility() {
+    bool has_folders = !g_workspace.empty();
+
+    // Manual override takes priority; fall back to workspace state.
+    bool ft_vis = m_file_tree_forced_visible.value_or(has_folders);
+    bool t_vis = m_terminal_forced_visible.value_or(has_folders);
+
+    if (m_file_tree) {
+        m_file_tree->set_visible(ft_vis);
+    }
+    if (m_terminal) {
+        m_terminal->set_visible(t_vis);
+    }
+
+    // Keep the dock layout checkmark bools in sync for the
+    // non-Darwin ImGui menu bar.
+    m_dock_layout->file_tree_visible = ft_vis;
+    m_dock_layout->terminal_visible = t_vis;
+    m_dock_layout->queue_adaptive_rebuild();
+
+#ifdef IM_APP_DARWIN
+    // Keep the native macOS menu item checkmarks in sync.
+    darwin_update_file_tree_menu_state(ft_vis);
+    darwin_update_terminal_menu_state(t_vis);
+#endif
+}
+
+void LayerMainWindow::_toggle_file_tree() {
+    bool has_folders = !g_workspace.empty();
+    bool current = m_file_tree_forced_visible.value_or(has_folders);
+    bool next = !current;
+    m_file_tree_forced_visible = (next == has_folders)
+                                     ? std::optional<bool>{}
+                                     : std::optional<bool>{next};
+    _update_panel_visibility();
+}
+
+void LayerMainWindow::_toggle_terminal() {
+    bool has_folders = !g_workspace.empty();
+    bool current = m_terminal_forced_visible.value_or(has_folders);
+    bool next = !current;
+    m_terminal_forced_visible = (next == has_folders)
+                                    ? std::optional<bool>{}
+                                    : std::optional<bool>{next};
+    _update_panel_visibility();
+}
+
+void LayerMainWindow::_on_reset_layout() { m_dock_layout->queue_reset(); }
 
 } // namespace ImNeovim

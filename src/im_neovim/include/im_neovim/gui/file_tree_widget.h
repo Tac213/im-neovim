@@ -78,6 +78,9 @@ class FileTreeWidget {
     // Docking state
     ImGuiID m_dock_id{0};
 
+    /// React to workspace changes: mark tree for refresh.
+    void _on_workspace_changed();
+
     // Workspace change connection
     uint64_t m_workspace_conn{0};
 };

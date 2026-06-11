@@ -14,8 +14,8 @@ FileTreeWidget::FileTreeWidget()
 
     // React to workspace changes — defer rebuild to avoid
     // iterator invalidation during rendering.
-    m_workspace_conn =
-        g_workspace.on_changed.connect([this]() { m_needs_refresh = true; });
+    m_workspace_conn = g_workspace.on_changed.connect(
+        std::bind_front(&FileTreeWidget::_on_workspace_changed, this));
 }
 
 FileTreeWidget::~FileTreeWidget() {
@@ -262,5 +262,7 @@ void FileTreeWidget::render() {
 
     ImGui::End();
 }
+
+void FileTreeWidget::_on_workspace_changed() { m_needs_refresh = true; }
 
 } // namespace ImNeovim
