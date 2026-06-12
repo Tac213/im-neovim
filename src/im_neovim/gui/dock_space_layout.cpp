@@ -119,6 +119,9 @@ void DockSpaceLayout::render() {
             if (ImGui::MenuItem("Terminal", "Ctrl+`", &terminal_visible)) {
                 on_toggle_terminal.emit();
             }
+            if (ImGui::MenuItem("Output", "Ctrl+Shift+U", &output_visible)) {
+                on_toggle_output.emit();
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
@@ -147,6 +150,11 @@ void DockSpaceLayout::render() {
                         ImGuiInputFlags_RouteGlobal |
                             ImGuiInputFlags_RouteOverFocused)) {
         on_toggle_terminal.emit();
+    }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_U,
+                        ImGuiInputFlags_RouteGlobal |
+                            ImGuiInputFlags_RouteOverFocused)) {
+        on_toggle_output.emit();
     }
 #endif
 
@@ -221,6 +229,7 @@ void DockSpaceLayout::_build_default_layout_internal() {
     ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), top_right_id);
     ImGui::DockBuilderDockWindow(m_terminal_window_name.c_str(),
                                  bottom_right_id);
+    ImGui::DockBuilderDockWindow(m_output_window_name.c_str(), bottom_right_id);
 
     // Finish building the dock layout
     ImGui::DockBuilderFinish(m_dockspace_id);
@@ -294,12 +303,13 @@ void DockSpaceLayout::build_layout(bool show_file_tree, bool show_terminal) {
         LOG_INFO("Layout built: file-tree + nvim");
 
     } else if (!show_file_tree && show_terminal) {
-        // --- Nvim (top) + terminal (bottom) ---
+        // --- Nvim (top) + terminal / output (bottom, tabbed) ---
         ImGuiID top_id, bottom_id;
         ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up,
                                     g_default_top_ratio, &top_id, &bottom_id);
         ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(), top_id);
         ImGui::DockBuilderDockWindow(m_terminal_window_name.c_str(), bottom_id);
+        ImGui::DockBuilderDockWindow(m_output_window_name.c_str(), bottom_id);
         ImGui::DockBuilderFinish(m_dockspace_id);
         m_dock_id_left = 0;
         m_dock_id_right_top = top_id;
@@ -376,9 +386,30 @@ ImGuiID DockSpaceLayout::get_dock_id_for_zone(Zone zone) const {
         return m_dock_id_right_top;
     case Zone::Terminal:
         return m_dock_id_right_bottom;
+    case Zone::Output:
+        return m_dock_id_right_bottom;
     default:
         return 0;
     }
+}
+
+bool DockSpaceLayout::is_active_tab_in_bottom_dock(
+    const std::string& window_name) const {
+    if (m_dock_id_right_bottom == 0) {
+        return false;
+    }
+
+    ImGuiDockNode* node = ImGui::DockBuilderGetNode(m_dock_id_right_bottom);
+    if (node == nullptr) {
+        return false;
+    }
+
+    ImGuiWindow* win = ImGui::FindWindowByName(window_name.c_str());
+    if (win == nullptr) {
+        return false;
+    }
+
+    return node->SelectedTabId == win->TabId;
 }
 
 void DockSpaceLayout::_ensure_nvim_no_close_button() {

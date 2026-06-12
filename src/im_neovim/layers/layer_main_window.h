@@ -5,6 +5,7 @@
 #include "im_neovim/gui/file_tree_widget.h"
 #include "im_neovim/gui/dock_space_layout.h"
 #include "im_neovim/gui/about_panel.h"
+#include "im_neovim/gui/output_widget.h"
 // clang-format on
 #include <im_app/layer.h>
 #include <memory>
@@ -34,6 +35,7 @@ class LayerMainWindow : public ImApp::Layer {
     std::shared_ptr<NvimWidget> m_nvim{nullptr};
     std::shared_ptr<FileTreeWidget> m_file_tree{nullptr};
     std::shared_ptr<DockSpaceLayout> m_dock_layout{nullptr};
+    std::shared_ptr<OutputWidget> m_output_widget{nullptr};
 
     // Exit modal state
     bool m_exit_modal_active{false};
@@ -45,9 +47,16 @@ class LayerMainWindow : public ImApp::Layer {
     // nullopt = auto (follow workspace); true/false = forced.
     std::optional<bool> m_file_tree_forced_visible;
     std::optional<bool> m_terminal_forced_visible;
+    std::optional<bool> m_output_forced_visible;
 
     // Per-folder single-instance manager (weak — owned by layer stack).
     std::weak_ptr<LayerInstanceManager> m_instance_manager;
+
+    // Pending focus requests set by toggle handlers for state 1
+    // (show + focus).  Processed in on_imgui_render() after the widget
+    // has been rendered so the ImGui window exists.
+    bool m_focus_terminal_next_frame{false};
+    bool m_focus_output_next_frame{false};
 
     void _show_exit_modal();
     void _render_exit_modal();
@@ -88,6 +97,9 @@ class LayerMainWindow : public ImApp::Layer {
 
     /// View > Terminal toggle.
     void _toggle_terminal();
+
+    /// View > Output toggle.
+    void _toggle_output();
 
     /// View > Reset Layout (native menu path).
     void _on_reset_layout();

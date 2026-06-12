@@ -21,7 +21,8 @@ class DockSpaceLayout {
     enum class Zone {
         FileTree, ///< Left panel for file tree (20% width)
         Nvim,     ///< Top-right panel for nvim editor (70% of right side)
-        Terminal  ///< Bottom-right panel for terminal (30% of right side)
+        Terminal, ///< Bottom-right panel for terminal (30% of right side)
+        Output    ///< Bottom-right panel for output log (tabbed with terminal)
     };
 
     DockSpaceLayout();
@@ -124,6 +125,9 @@ class DockSpaceLayout {
     /// Emitted when View > Terminal is toggled.
     Signal<> on_toggle_terminal;
 
+    /// Emitted when View > Output is toggled.
+    Signal<> on_toggle_output;
+
     /// Checkmark state for the ImGui View menu (non-Darwin).
     /// Set by LayerMainWindow whenever visibility changes.
     bool file_tree_visible{true};
@@ -131,16 +135,21 @@ class DockSpaceLayout {
     /// Checkmark state for the ImGui View menu (non-Darwin).
     bool terminal_visible{true};
 
+    /// Checkmark state for the ImGui View menu (non-Darwin).
+    bool output_visible{true};
+
     /**
      * @brief Sets the window names used by DockBuilderDockWindow when
      * building the default layout. Call before build_default_layout() or
      * reset_to_default().
      */
     void set_window_names(const std::string& file_tree, const std::string& nvim,
-                          const std::string& terminal) {
+                          const std::string& terminal,
+                          const std::string& output) {
         m_file_tree_window_name = file_tree;
         m_nvim_window_name = nvim;
         m_terminal_window_name = terminal;
+        m_output_window_name = output;
     }
 
     /**
@@ -167,6 +176,13 @@ class DockSpaceLayout {
         m_pending_adaptive_rebuild = false;
     }
 
+    /**
+     * @brief Returns true if the named window is currently the active
+     * (visible) tab in the bottom-right dock node shared by the terminal
+     * and output widgets.
+     */
+    bool is_active_tab_in_bottom_dock(const std::string& window_name) const;
+
   private:
     bool m_initialized{false};
     bool m_pending_reset{false};
@@ -177,12 +193,13 @@ class DockSpaceLayout {
     // Dock node IDs for each zone
     ImGuiID m_dock_id_left{0};         // FileTree
     ImGuiID m_dock_id_right_top{0};    // Nvim
-    ImGuiID m_dock_id_right_bottom{0}; // Terminal
+    ImGuiID m_dock_id_right_bottom{0}; // Terminal / Output (tabbed together)
 
     // Window names for docking (matching widget defaults)
     std::string m_file_tree_window_name{"File Tree"};
     std::string m_nvim_window_name{"nvim (no file)"};
     std::string m_terminal_window_name{"Terminal"};
+    std::string m_output_window_name{"Output"};
 
     // Default layout ratios
     static constexpr float g_default_left_ratio = 0.20f;

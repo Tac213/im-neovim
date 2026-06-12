@@ -44,6 +44,7 @@ set(im_app_public_files
     "${public_dir}/im_app/image_manager.h"
     "${public_dir}/im_app/instance_lock.h"
     "${public_dir}/im_app/ipc_channel.h"
+    "${public_dir}/im_app/output_capture.h"
 )
 
 set(im_app_private_files
@@ -53,6 +54,7 @@ set(im_app_private_files
     "${im_app_dir}/application.cpp"
     "${im_app_dir}/font_manager.cpp"
     "${im_app_dir}/image_manager.cpp"
+    "${im_app_dir}/output_capture.cpp"
 )
 
 set(im_app_platform_specific_files)
@@ -235,7 +237,9 @@ set(im_neovim_private_files
     "${im_neovim_dir}/gui/file_tree_widget.cpp"
     "${im_neovim_dir}/gui/dock_space_layout.cpp"
     "${im_neovim_dir}/gui/about_panel.cpp"
+    "${im_neovim_dir}/gui/output_widget.cpp"
     "${im_neovim_private_header_dir}/im_neovim/gui/about_panel.h"
+    "${im_neovim_private_header_dir}/im_neovim/gui/output_widget.h"
     "${im_neovim_dir}/layers/layer_libuv.h"
     "${im_neovim_dir}/layers/layer_libuv.cpp"
     "${im_neovim_dir}/layers/layer_main_window.h"

@@ -13,6 +13,7 @@ Signal<> g_native_on_reset_layout;
 Signal<> g_native_on_exit;
 Signal<> g_native_on_toggle_file_tree;
 Signal<> g_native_on_toggle_terminal;
+Signal<> g_native_on_toggle_output;
 
 } // namespace ImNeovim
 
@@ -63,11 +64,17 @@ Signal<> g_native_on_toggle_terminal;
     ImNeovim::g_native_on_toggle_terminal.emit();
 }
 
+- (void)toggleOutputAction:(id)sender {
+    (void)sender;
+    ImNeovim::g_native_on_toggle_output.emit();
+}
+
 @end
 
 // -- File-level references to menu items that need state updates --
 static NSMenuItem *s_file_tree_menu_item = nil;
 static NSMenuItem *s_terminal_menu_item = nil;
+static NSMenuItem *s_output_menu_item = nil;
 
 // -- Public setup function --
 
@@ -174,6 +181,16 @@ void darwin_setup_native_menus() {
     [s_terminal_menu_item setTarget:s_target];
     [s_terminal_menu_item setState:NSControlStateValueOff];
 
+    s_output_menu_item =
+        [view_menu addItemWithTitle:@"Output"
+                             action:@selector(toggleOutputAction:)
+                      keyEquivalent:@"U"];
+    [s_output_menu_item
+        setKeyEquivalentModifierMask:NSEventModifierFlagCommand |
+                                     NSEventModifierFlagShift];
+    [s_output_menu_item setTarget:s_target];
+    [s_output_menu_item setState:NSControlStateValueOff];
+
     // Insert after File (index 2)
     [main_menu insertItem:view_menu_item atIndex:2];
 }
@@ -188,6 +205,13 @@ void darwin_update_file_tree_menu_state(bool visible) {
 void darwin_update_terminal_menu_state(bool visible) {
     if (s_terminal_menu_item) {
         s_terminal_menu_item.state =
+            visible ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+}
+
+void darwin_update_output_menu_state(bool visible) {
+    if (s_output_menu_item) {
+        s_output_menu_item.state =
             visible ? NSControlStateValueOn : NSControlStateValueOff;
     }
 }

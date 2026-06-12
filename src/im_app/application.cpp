@@ -1,6 +1,7 @@
 #include "im_app/application.h"
 #include "im_app/graphics_context.h"
 #include "im_app/imgui_renderer.h"
+#include "im_app/output_capture.h"
 #include "im_app/window.h"
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -134,6 +135,7 @@ void initialize_spdlog() {
     stdout_sink->set_color(spdlog::level::err, stdout_sink->red);
 #endif
     std::vector<spdlog::sink_ptr> sinks{stdout_sink};
+    sinks.push_back(OutputCapture::create_sink());
     auto logger =
         std::make_shared<spdlog::logger>("ImApp", sinks.begin(), sinks.end());
 #if defined(IM_APP_DEBUG)

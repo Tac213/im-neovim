@@ -8,6 +8,7 @@
 #include "layers/layer_libuv.h"
 #include <im_app/application.h>
 #include <im_app/file_system.h>
+#include <im_app/output_capture.h>
 #include <spdlog/sinks/daily_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -39,6 +40,7 @@ static void initialize_logger() {
         log_file_path.string(), 2, 30);
 #endif
     std::vector<spdlog::sink_ptr> sinks{stdout_sink, file_sink};
+    sinks.push_back(ImApp::OutputCapture::create_sink());
     auto logger = std::make_shared<spdlog::logger>(IM_NVIM_LOGGER_NAME,
                                                    sinks.begin(), sinks.end());
 #if defined(IM_NVIM_DEBUG)

@@ -92,6 +92,7 @@ LayerMainWindow::LayerMainWindow() {
     m_terminal = std::make_shared<Terminal>();
     m_file_tree = std::make_shared<FileTreeWidget>();
     m_nvim = std::make_shared<NvimWidget>();
+    m_output_widget = std::make_shared<OutputWidget>();
 
     // Create the dock layout manager
     m_dock_layout = std::make_shared<DockSpaceLayout>();
@@ -139,6 +140,8 @@ void LayerMainWindow::on_attach() {
             std::bind_front(&LayerMainWindow::_toggle_file_tree, this));
         m_dock_layout->on_toggle_terminal.connect(
             std::bind_front(&LayerMainWindow::_toggle_terminal, this));
+        m_dock_layout->on_toggle_output.connect(
+            std::bind_front(&LayerMainWindow::_toggle_output, this));
     }
 
     // Keep nvim's working directory in sync with the first workspace folder.
@@ -174,6 +177,8 @@ void LayerMainWindow::on_attach() {
         std::bind_front(&LayerMainWindow::_toggle_file_tree, this));
     ImNeovim::g_native_on_toggle_terminal.connect(
         std::bind_front(&LayerMainWindow::_toggle_terminal, this));
+    ImNeovim::g_native_on_toggle_output.connect(
+        std::bind_front(&LayerMainWindow::_toggle_output, this));
 #endif
 }
 
@@ -194,9 +199,10 @@ void LayerMainWindow::on_imgui_render() {
             if (first_render) {
                 // Tell the dock layout the current window names so that
                 // DockBuilderDockWindow can place them correctly.
-                m_dock_layout->set_window_names(m_file_tree->window_title(),
-                                                m_nvim->window_title(),
-                                                m_terminal->window_title());
+                m_dock_layout->set_window_names(
+                    m_file_tree->window_title(), m_nvim->window_title(),
+                    m_terminal->window_title(),
+                    m_output_widget->window_title());
 
                 // Build the appropriate layout based on visibility.
                 bool has_folders = !g_workspace.empty();
@@ -210,6 +216,9 @@ void LayerMainWindow::on_imgui_render() {
                     DockSpaceLayout::Zone::Nvim));
                 m_terminal->set_dock_id(m_dock_layout->get_dock_id_for_zone(
                     DockSpaceLayout::Zone::Terminal));
+                m_output_widget->set_dock_id(
+                    m_dock_layout->get_dock_id_for_zone(
+                        DockSpaceLayout::Zone::Output));
                 first_render = false;
             }
         }
@@ -219,6 +228,19 @@ void LayerMainWindow::on_imgui_render() {
     m_file_tree->render();
     m_nvim->render();
     m_terminal->render();
+    m_output_widget->render();
+
+    // Process pending focus requests from toggle handlers (state 1:
+    // show + focus).  Must happen after the widget's render() so the
+    // ImGui window exists.
+    if (m_focus_terminal_next_frame) {
+        ImGui::SetWindowFocus(m_terminal->window_title().c_str());
+        m_focus_terminal_next_frame = false;
+    }
+    if (m_focus_output_next_frame) {
+        ImGui::SetWindowFocus(m_output_widget->window_title().c_str());
+        m_focus_output_next_frame = false;
+    }
 
     // Render exit confirmation modal when the user tries to close the app
     // with unsaved changes.
@@ -235,9 +257,9 @@ void LayerMainWindow::on_imgui_render() {
         m_dock_layout->clear_reset_pending();
         // Update window names before rebuilding so that
         // DockBuilderDockWindow targets the current window titles.
-        m_dock_layout->set_window_names(m_file_tree->window_title(),
-                                        m_nvim->window_title(),
-                                        m_terminal->window_title());
+        m_dock_layout->set_window_names(
+            m_file_tree->window_title(), m_nvim->window_title(),
+            m_terminal->window_title(), m_output_widget->window_title());
         // Reset also clears any manual visibility overrides.
         m_file_tree_forced_visible.reset();
         m_terminal_forced_visible.reset();
@@ -256,9 +278,9 @@ void LayerMainWindow::on_imgui_render() {
     if (m_dock_layout && m_dock_layout->is_adaptive_rebuild_pending()) {
         m_dock_layout->clear_adaptive_rebuild_pending();
         // Update window names before rebuilding.
-        m_dock_layout->set_window_names(m_file_tree->window_title(),
-                                        m_nvim->window_title(),
-                                        m_terminal->window_title());
+        m_dock_layout->set_window_names(
+            m_file_tree->window_title(), m_nvim->window_title(),
+            m_terminal->window_title(), m_output_widget->window_title());
 
         bool has_folders = !g_workspace.empty();
         bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
@@ -275,6 +297,8 @@ void LayerMainWindow::_assign_dock_ids() {
         m_dock_layout->get_dock_id_for_zone(DockSpaceLayout::Zone::Nvim));
     m_terminal->set_dock_id(
         m_dock_layout->get_dock_id_for_zone(DockSpaceLayout::Zone::Terminal));
+    m_output_widget->set_dock_id(
+        m_dock_layout->get_dock_id_for_zone(DockSpaceLayout::Zone::Output));
 }
 
 // --- Exit confirmation modal ---
@@ -496,6 +520,7 @@ void LayerMainWindow::_update_panel_visibility() {
     // Manual override takes priority; fall back to workspace state.
     bool ft_vis = m_file_tree_forced_visible.value_or(has_folders);
     bool t_vis = m_terminal_forced_visible.value_or(has_folders);
+    bool o_vis = m_output_forced_visible.value_or(has_folders);
 
     if (m_file_tree) {
         m_file_tree->set_visible(ft_vis);
@@ -503,17 +528,22 @@ void LayerMainWindow::_update_panel_visibility() {
     if (m_terminal) {
         m_terminal->set_visible(t_vis);
     }
+    if (m_output_widget) {
+        m_output_widget->set_visible(o_vis);
+    }
 
     // Keep the dock layout checkmark bools in sync for the
     // non-Darwin ImGui menu bar.
     m_dock_layout->file_tree_visible = ft_vis;
     m_dock_layout->terminal_visible = t_vis;
+    m_dock_layout->output_visible = o_vis;
     m_dock_layout->queue_adaptive_rebuild();
 
 #ifdef IM_APP_DARWIN
     // Keep the native macOS menu item checkmarks in sync.
     darwin_update_file_tree_menu_state(ft_vis);
     darwin_update_terminal_menu_state(t_vis);
+    darwin_update_output_menu_state(o_vis);
 #endif
 }
 
@@ -529,12 +559,74 @@ void LayerMainWindow::_toggle_file_tree() {
 
 void LayerMainWindow::_toggle_terminal() {
     bool has_folders = !g_workspace.empty();
-    bool current = m_terminal_forced_visible.value_or(has_folders);
-    bool next = !current;
-    m_terminal_forced_visible = (next == has_folders)
-                                    ? std::optional<bool>{}
-                                    : std::optional<bool>{next};
-    _update_panel_visibility();
+    bool currently_visible = m_terminal_forced_visible.value_or(has_folders);
+
+    if (!currently_visible) {
+        // State 1: not visible → show the terminal in the dock area and
+        // focus it once the window has been created.
+        bool next = true;
+        m_terminal_forced_visible = (next == has_folders)
+                                        ? std::optional<bool>{}
+                                        : std::optional<bool>{next};
+        m_focus_terminal_next_frame = true;
+        _update_panel_visibility();
+        return;
+    }
+
+    // Visible — check if it's the active tab in the bottom dock node.
+    if (m_dock_layout->is_active_tab_in_bottom_dock(
+            m_terminal->window_title())) {
+        // State 3: visible AND active tab → hide the entire bottom dock
+        // area (both terminal and output).
+        m_terminal_forced_visible = false;
+        m_output_forced_visible = false;
+        _update_panel_visibility();
+        return;
+    }
+
+    // State 2: visible but not the active tab → focus it.
+    ImGui::SetWindowFocus(m_terminal->window_title().c_str());
+    // Checkmark stays on; no layout rebuild needed.
+    m_dock_layout->terminal_visible = true;
+#ifdef IM_APP_DARWIN
+    darwin_update_terminal_menu_state(true);
+#endif
+}
+
+void LayerMainWindow::_toggle_output() {
+    bool has_folders = !g_workspace.empty();
+    bool currently_visible = m_output_forced_visible.value_or(has_folders);
+
+    if (!currently_visible) {
+        // State 1: not visible → show the output widget in the dock area
+        // and focus it once the window has been created.
+        bool next = true;
+        m_output_forced_visible = (next == has_folders)
+                                      ? std::optional<bool>{}
+                                      : std::optional<bool>{next};
+        m_focus_output_next_frame = true;
+        _update_panel_visibility();
+        return;
+    }
+
+    // Visible — check if it's the active tab in the bottom dock node.
+    if (m_dock_layout->is_active_tab_in_bottom_dock(
+            m_output_widget->window_title())) {
+        // State 3: visible AND active tab → hide the entire bottom dock
+        // area (both terminal and output).
+        m_terminal_forced_visible = false;
+        m_output_forced_visible = false;
+        _update_panel_visibility();
+        return;
+    }
+
+    // State 2: visible but not the active tab → focus it.
+    ImGui::SetWindowFocus(m_output_widget->window_title().c_str());
+    // Checkmark stays on; no layout rebuild needed.
+    m_dock_layout->output_visible = true;
+#ifdef IM_APP_DARWIN
+    darwin_update_output_menu_state(true);
+#endif
 }
 
 void LayerMainWindow::_on_reset_layout() { m_dock_layout->queue_reset(); }
