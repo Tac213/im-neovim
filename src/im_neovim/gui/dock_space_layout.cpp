@@ -248,7 +248,7 @@ void DockSpaceLayout::_build_default_layout_internal() {
              m_dock_id_left, m_dock_id_right_top, m_dock_id_right_bottom);
 }
 
-void DockSpaceLayout::build_layout(bool show_file_tree, bool show_terminal) {
+void DockSpaceLayout::build_layout(bool show_file_tree, bool show_bottom_dock) {
     if (!m_initialized) {
         LOG_ERROR("Cannot build layout - DockSpaceLayout not initialized");
         return;
@@ -257,7 +257,7 @@ void DockSpaceLayout::build_layout(bool show_file_tree, bool show_terminal) {
     // Clear any existing layout first.
     ImGui::DockBuilderRemoveNodeChildNodes(m_dockspace_id);
 
-    if (!show_file_tree && !show_terminal) {
+    if (!show_file_tree && !show_bottom_dock) {
         // --- Nvim only (no splits) ---
         ImGui::DockBuilderDockWindow(m_nvim_window_name.c_str(),
                                      m_dockspace_id);
@@ -278,7 +278,7 @@ void DockSpaceLayout::build_layout(bool show_file_tree, bool show_terminal) {
 
         LOG_INFO("Layout built: nvim-only");
 
-    } else if (show_file_tree && !show_terminal) {
+    } else if (show_file_tree && !show_bottom_dock) {
         // --- File tree (left) + nvim (right) ---
         ImGuiID left_id, right_id;
         ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Left,
@@ -302,7 +302,7 @@ void DockSpaceLayout::build_layout(bool show_file_tree, bool show_terminal) {
 
         LOG_INFO("Layout built: file-tree + nvim");
 
-    } else if (!show_file_tree && show_terminal) {
+    } else if (!show_file_tree && show_bottom_dock) {
         // --- Nvim (top) + terminal / output (bottom, tabbed) ---
         ImGuiID top_id, bottom_id;
         ImGui::DockBuilderSplitNode(m_dockspace_id, ImGuiDir_Up,
@@ -325,7 +325,7 @@ void DockSpaceLayout::build_layout(bool show_file_tree, bool show_terminal) {
             }
         }
 
-        LOG_INFO("Layout built: nvim + terminal");
+        LOG_INFO("Layout built: nvim + bottom dock");
 
     } else {
         // --- Full 3-way split ---

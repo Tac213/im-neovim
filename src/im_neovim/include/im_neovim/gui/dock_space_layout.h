@@ -159,9 +159,10 @@ class DockSpaceLayout {
      * depending on which panels are currently visible.
      *
      * @param show_file_tree If true, include the file tree (left split).
-     * @param show_terminal If true, include the terminal (bottom split).
+     * @param show_bottom_dock If true, include the bottom dock area
+     *        (terminal + output tabbed together).
      */
-    void build_layout(bool show_file_tree, bool show_terminal);
+    void build_layout(bool show_file_tree, bool show_bottom_dock);
 
     /**
      * @brief Queues an adaptive layout rebuild for after the current

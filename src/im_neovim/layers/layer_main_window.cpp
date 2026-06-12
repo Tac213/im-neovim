@@ -208,7 +208,8 @@ void LayerMainWindow::on_imgui_render() {
                 bool has_folders = !g_workspace.empty();
                 bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
                 bool show_t = m_terminal_forced_visible.value_or(has_folders);
-                m_dock_layout->build_layout(show_ft, show_t);
+                bool show_o = m_output_forced_visible.value_or(has_folders);
+                m_dock_layout->build_layout(show_ft, show_t || show_o);
 
                 m_file_tree->set_dock_id(m_dock_layout->get_dock_id_for_zone(
                     DockSpaceLayout::Zone::FileTree));
@@ -240,8 +241,8 @@ void LayerMainWindow::on_imgui_render() {
         bool has_folders = !g_workspace.empty();
         bool changed = false;
 
-        auto sync_one = [&](bool widget_visible,
-                            std::optional<bool>& forced, bool auto_vis) {
+        auto sync_one = [&](bool widget_visible, std::optional<bool>& forced,
+                            bool auto_vis) {
             bool expected = forced.value_or(auto_vis);
             if (widget_visible != expected) {
                 forced = (widget_visible == auto_vis)
@@ -254,8 +255,8 @@ void LayerMainWindow::on_imgui_render() {
 
         changed |= sync_one(m_file_tree->is_visible(),
                             m_file_tree_forced_visible, has_folders);
-        changed |= sync_one(m_terminal->is_visible(),
-                            m_terminal_forced_visible, has_folders);
+        changed |= sync_one(m_terminal->is_visible(), m_terminal_forced_visible,
+                            has_folders);
         changed |= sync_one(m_output_widget->is_visible(),
                             m_output_forced_visible, has_folders);
 
@@ -302,7 +303,8 @@ void LayerMainWindow::on_imgui_render() {
         bool has_folders = !g_workspace.empty();
         bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
         bool show_t = m_terminal_forced_visible.value_or(has_folders);
-        m_dock_layout->build_layout(show_ft, show_t);
+        bool show_o = m_output_forced_visible.value_or(has_folders);
+        m_dock_layout->build_layout(show_ft, show_t || show_o);
 
         // Re-assign dock IDs after reset
         _assign_dock_ids();
@@ -319,7 +321,8 @@ void LayerMainWindow::on_imgui_render() {
         bool has_folders = !g_workspace.empty();
         bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
         bool show_t = m_terminal_forced_visible.value_or(has_folders);
-        m_dock_layout->build_layout(show_ft, show_t);
+        bool show_o = m_output_forced_visible.value_or(has_folders);
+        m_dock_layout->build_layout(show_ft, show_t || show_o);
 
         _assign_dock_ids();
     }
