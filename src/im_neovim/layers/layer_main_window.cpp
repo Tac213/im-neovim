@@ -230,6 +230,40 @@ void LayerMainWindow::on_imgui_render() {
     m_terminal->render();
     m_output_widget->render();
 
+    // Sync visibility: when the user closes a docked window via the dock
+    // tab close button, the widget's internal m_is_visible becomes false
+    // but the LayerMainWindow forced-visibility overrides and the
+    // DockSpaceLayout menu checkmarks are not updated.  Detect the
+    // discrepancy here so that menu checkmarks stay correct and the
+    // widget does not re-appear on the next _update_panel_visibility() call.
+    {
+        bool has_folders = !g_workspace.empty();
+        bool changed = false;
+
+        auto sync_one = [&](bool widget_visible,
+                            std::optional<bool>& forced, bool auto_vis) {
+            bool expected = forced.value_or(auto_vis);
+            if (widget_visible != expected) {
+                forced = (widget_visible == auto_vis)
+                             ? std::optional<bool>{}
+                             : std::optional<bool>{widget_visible};
+                return true;
+            }
+            return false;
+        };
+
+        changed |= sync_one(m_file_tree->is_visible(),
+                            m_file_tree_forced_visible, has_folders);
+        changed |= sync_one(m_terminal->is_visible(),
+                            m_terminal_forced_visible, has_folders);
+        changed |= sync_one(m_output_widget->is_visible(),
+                            m_output_forced_visible, has_folders);
+
+        if (changed) {
+            _update_panel_visibility();
+        }
+    }
+
     // Process pending focus requests from toggle handlers (state 1:
     // show + focus).  Must happen after the widget's render() so the
     // ImGui window exists.
