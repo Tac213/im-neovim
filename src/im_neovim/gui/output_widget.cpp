@@ -123,8 +123,7 @@ void OutputWidget::_render_toolbar() {
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
                             ImGui::CalcTextSize("Clear").x -
                             ImGui::CalcTextSize("Auto-scroll").x -
-                            ImGui::CalcTextSize("Show timestamps").x -
-                            ImGui::GetStyle().ItemSpacing.x * 5 -
+                            ImGui::GetStyle().ItemSpacing.x * 3 -
                             ImGui::GetStyle().FramePadding.x * 2);
     ImGui::InputTextWithHint("##output_filter", "Filter...", m_filter_buffer,
                              sizeof(m_filter_buffer));
@@ -133,31 +132,13 @@ void OutputWidget::_render_toolbar() {
 
     // -- Clear button --
     if (ImGui::Button("Clear")) {
-        // If a specific logger is selected, only clear its entries.
-        if (!m_logger_names.empty() && m_selected_logger_index >= 0 &&
-            m_selected_logger_index < static_cast<int>(m_logger_names.size())) {
-            const auto& logger_name =
-                m_logger_names[static_cast<size_t>(m_selected_logger_index)];
-            ImApp::OutputCapture::instance().clear(logger_name);
-            std::erase_if(m_entries, [&](const ImApp::LogEntry& e) {
-                return e.logger_name == logger_name;
-            });
-        } else {
-            ImApp::OutputCapture::instance().clear();
-            m_entries.clear();
-            m_selected_logger_index = 0;
-        }
+        _clear_output();
     }
 
     ImGui::SameLine();
 
     // -- Auto-scroll toggle --
     ImGui::Checkbox("Auto-scroll", &m_auto_scroll);
-
-    ImGui::SameLine();
-
-    // -- Show timestamps toggle --
-    ImGui::Checkbox("Show timestamps", &m_show_timestamps);
 }
 
 // ---------------------------------------------------------------------------
@@ -186,10 +167,14 @@ void OutputWidget::_render_log_entries() {
                        [](unsigned char c) { return std::tolower(c); });
     }
 
-    // Pre-filter: build a vector of pointers to visible entries so that
-    // ImGuiListClipper always sees an item on the first row (its height
-    // measurement fails with an assertion if all items in a batch are
-    // skipped via `continue`).
+    // Clear selection when the filter text changes (stale indices).
+    if (filter != m_last_filter) {
+        m_selected_indices.clear();
+        m_last_filter = filter;
+    }
+
+    // Build a vector of pointers to visible entries (filtered by logger
+    // and text filter).
     std::vector<const ImApp::LogEntry*> visible_entries;
     visible_entries.reserve(m_entries.size());
     for (const auto& entry : m_entries) {
@@ -219,30 +204,65 @@ void OutputWidget::_render_log_entries() {
                       ImGuiWindowFlags_HorizontalScrollbar);
 
     if (visible_entries.empty()) {
-        // Still need to render at least one item so that the child region
-        // has a measurable height.  A dim placeholder line suffices.
+        // Render a placeholder so the child region has measurable height.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
         ImGui::TextUnformatted(has_filter ? "No matching entries."
                                           : "No output yet.");
         ImGui::PopStyleColor();
     } else {
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(visible_entries.size()));
+        // Multi-select: allows Shift+click range, Ctrl+click toggle,
+        // and Ctrl+A select-all out of the box.
+        ImGuiMultiSelectFlags ms_flags =
+            ImGuiMultiSelectFlags_NoSelectOnRightClick |
+            ImGuiMultiSelectFlags_ClearOnClickVoid |
+            ImGuiMultiSelectFlags_BoxSelect1d;
 
-        while (clipper.Step()) {
-            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
-                const auto* entry = visible_entries[static_cast<size_t>(i)];
-                ImVec4 color = _color_for_level(entry->level);
-                ImGui::PushStyleColor(ImGuiCol_Text, color);
-                if (m_show_timestamps) {
-                    ImGui::TextUnformatted(entry->message.c_str());
-                } else {
-                    ImGui::TextUnformatted(entry->payload.c_str());
-                }
-                ImGui::PopStyleColor();
+        ImGui::BeginMultiSelect(ms_flags);
+
+        for (int i = 0; i < static_cast<int>(visible_entries.size()); ++i) {
+            ImGui::PushID(i);
+            ImGui::SetNextItemSelectionUserData(i);
+            bool selected = m_selected_indices.count(i) != 0;
+
+            const auto* entry = visible_entries[static_cast<size_t>(i)];
+            ImVec4 color = _color_for_level(entry->level);
+
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            ImGui::PushStyleColor(ImGuiCol_Header,
+                                  ImVec4(0.35f, 0.35f, 0.35f, 1.0f));
+
+            const char* text = m_show_timestamps ? entry->message.c_str()
+                                                 : entry->payload.c_str();
+
+            if (ImGui::Selectable(text, selected,
+                                  ImGuiSelectableFlags_AllowOverlap)) {
+                // Selection state is handled by BeginMultiSelect /
+                // EndMultiSelect — no manual toggle needed here.
             }
+
+            // Right-click on a line opens the context menu.
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                ImGui::OpenPopup("##output_context");
+            }
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+
+        ImGuiMultiSelectIO* ms_io = ImGui::EndMultiSelect();
+        _apply_multi_select(ms_io, static_cast<int>(visible_entries.size()));
+    }
+
+    // Ctrl+C shortcut: copy selected lines to the clipboard.
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_C)) {
+        if (!m_selected_indices.empty() && !visible_entries.empty()) {
+            _copy_selected(visible_entries);
         }
     }
+
+    // Context menu (also opens via right-click on the empty region).
+    _render_context_menu(visible_entries);
 
     // Auto-scroll: if enabled, keep the scroll position at the bottom
     // when new entries arrive.
@@ -274,6 +294,133 @@ ImVec4 OutputWidget::_color_for_level(int level) {
     default:
         return ImVec4(1.00f, 1.00f, 1.00f, 1.00f); // White
     }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select helpers
+// ---------------------------------------------------------------------------
+
+void OutputWidget::_apply_multi_select(ImGuiMultiSelectIO* ms_io,
+                                       int item_count) {
+    if (ms_io == nullptr) {
+        return;
+    }
+
+    for (const auto& req : ms_io->Requests) {
+        switch (req.Type) {
+        case ImGuiSelectionRequestType_SetAll:
+            m_selected_indices.clear();
+            if (req.Selected) {
+                for (int i = 0; i < item_count; ++i) {
+                    m_selected_indices.insert(i);
+                }
+            }
+            break;
+
+        case ImGuiSelectionRequestType_SetRange: {
+            int first = req.RangeFirstItem;
+            int last = req.RangeLastItem;
+            if (first > last) {
+                std::swap(first, last);
+            }
+            for (int i = first; i <= last; ++i) {
+                if (req.Selected) {
+                    m_selected_indices.insert(i);
+                } else {
+                    m_selected_indices.erase(i);
+                }
+            }
+            break;
+        }
+
+        default:
+            break;
+        }
+    }
+}
+
+void OutputWidget::_copy_selected(
+    const std::vector<const ImApp::LogEntry*>& visible_entries) {
+    if (m_selected_indices.empty() || visible_entries.empty()) {
+        return;
+    }
+
+    std::string clipboard_text;
+    clipboard_text.reserve(m_selected_indices.size() * 128);
+
+    // m_selected_indices is a std::set<int>, so iteration is in sorted
+    // order — the copied text appears in the same order as on screen.
+    for (int idx : m_selected_indices) {
+        if (idx >= 0 && idx < static_cast<int>(visible_entries.size())) {
+            clipboard_text += m_show_timestamps ? visible_entries[idx]->message
+                                                : visible_entries[idx]->payload;
+            clipboard_text += '\n';
+        }
+    }
+
+    ImGui::SetClipboardText(clipboard_text.c_str());
+}
+
+void OutputWidget::_clear_output() {
+    // If a specific logger is selected, only clear its entries.
+    if (!m_logger_names.empty() && m_selected_logger_index >= 0 &&
+        m_selected_logger_index < static_cast<int>(m_logger_names.size())) {
+        const auto& logger_name =
+            m_logger_names[static_cast<size_t>(m_selected_logger_index)];
+        ImApp::OutputCapture::instance().clear(logger_name);
+        std::erase_if(m_entries, [&](const ImApp::LogEntry& e) {
+            return e.logger_name == logger_name;
+        });
+    } else {
+        ImApp::OutputCapture::instance().clear();
+        m_entries.clear();
+        m_selected_logger_index = 0;
+    }
+    m_selected_indices.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Context menu
+// ---------------------------------------------------------------------------
+
+void OutputWidget::_render_context_menu(
+    const std::vector<const ImApp::LogEntry*>& visible_entries) {
+    // Allow right-click on the empty child-region background to also open
+    // the popup (in addition to right-clicking a Selectable line).
+    // Use a simple hover+click test rather than BeginPopupContextWindow,
+    // because the latter begins its own popup window which would corrupt
+    // the window stack when combined with the manual BeginPopup below.
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                               ImGuiHoveredFlags_AllowWhenBlockedByPopup) &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        ImGui::OpenPopup("##output_context");
+    }
+
+    if (!ImGui::BeginPopup("##output_context")) {
+        return;
+    }
+
+    bool has_selection = !m_selected_indices.empty();
+
+#ifdef IM_APP_DARWIN
+    if (ImGui::MenuItem("Copy", "Cmd+C", false, has_selection)) {
+#else
+    if (ImGui::MenuItem("Copy", "Ctrl+C", false, has_selection)) {
+#endif
+        _copy_selected(visible_entries);
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Clear Output")) {
+        _clear_output();
+    }
+
+    ImGui::Separator();
+
+    ImGui::MenuItem("Show Timestamps", nullptr, &m_show_timestamps);
+
+    ImGui::EndPopup();
 }
 
 } // namespace ImNeovim

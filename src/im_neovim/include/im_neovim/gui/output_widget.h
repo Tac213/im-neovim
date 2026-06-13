@@ -3,6 +3,7 @@
 #include <deque>
 #include <im_app/output_capture.h>
 #include <imgui.h>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -75,7 +76,19 @@ class OutputWidget {
     int m_selected_logger_index{0};
     bool m_logger_names_populated{false};
 
+    // --- Multi-select ---
+    void _apply_multi_select(ImGuiMultiSelectIO* ms_io, int item_count);
+    void
+    _copy_selected(const std::vector<const ImApp::LogEntry*>& visible_entries);
+    void _clear_output();
+    void _render_context_menu(
+        const std::vector<const ImApp::LogEntry*>& visible_entries);
+
     void _populate_logger_names();
+
+    // --- Multi-select state ---
+    std::set<int> m_selected_indices;
+    std::string m_last_filter;
 };
 
 } // namespace ImNeovim
