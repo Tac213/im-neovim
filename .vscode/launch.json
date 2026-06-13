@@ -12,11 +12,32 @@
       "console": "integratedTerminal"
     },
     {
+      "type": "lldb",
+      "request": "launch",
+      "name": "(lldb) Launch imnvim with workspace",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": ["${workspaceFolder}"],
+      "cwd": "${workspaceFolder}",
+      "internalConsoleOptions": "neverOpen",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "(Windows) Launch imnvim",
       "type": "cppvsdbg",
       "request": "launch",
       "program": "${command:cmake.launchTargetPath}",
       "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "console": "externalTerminal"
+    },
+    {
+      "name": "(Windows) Launch imnvim with workspace",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": ["${workspaceFolder}"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],
