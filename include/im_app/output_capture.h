@@ -60,6 +60,13 @@ class OutputCapture {
     void clear();
 
     /**
+     * @brief Discard only entries belonging to a specific logger.
+     *
+     * @param logger_name  Exact logger name whose entries should be removed.
+     */
+    void clear(const std::string& logger_name);
+
+    /**
      * @brief Maximum number of entries kept in the ring buffer.
      */
     static constexpr size_t g_max_entries = 10000;

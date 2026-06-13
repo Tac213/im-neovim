@@ -69,6 +69,29 @@ void OutputCapture::clear() {
     m_read_index = 0;
 }
 
+void OutputCapture::clear(const std::string& logger_name) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    // Count how many matching entries lie before the current read cursor
+    // so we can adjust m_read_index after erasure.
+    size_t removed_before_read = 0;
+    for (size_t i = 0; i < m_read_index && i < m_entries.size(); ++i) {
+        if (m_entries[i].logger_name == logger_name) {
+            ++removed_before_read;
+        }
+    }
+
+    std::erase_if(m_entries, [&](const LogEntry& e) {
+        return e.logger_name == logger_name;
+    });
+
+    if (m_read_index > removed_before_read) {
+        m_read_index -= removed_before_read;
+    } else {
+        m_read_index = 0;
+    }
+}
+
 void OutputCapture::add_entry(int level, std::string logger_name,
                               std::string message, std::string payload) {
     std::lock_guard<std::mutex> lock(m_mutex);

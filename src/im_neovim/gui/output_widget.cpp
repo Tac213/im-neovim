@@ -133,9 +133,20 @@ void OutputWidget::_render_toolbar() {
 
     // -- Clear button --
     if (ImGui::Button("Clear")) {
-        ImApp::OutputCapture::instance().clear();
-        m_entries.clear();
-        m_selected_logger_index = 0;
+        // If a specific logger is selected, only clear its entries.
+        if (!m_logger_names.empty() && m_selected_logger_index >= 0 &&
+            m_selected_logger_index < static_cast<int>(m_logger_names.size())) {
+            const auto& logger_name =
+                m_logger_names[static_cast<size_t>(m_selected_logger_index)];
+            ImApp::OutputCapture::instance().clear(logger_name);
+            std::erase_if(m_entries, [&](const ImApp::LogEntry& e) {
+                return e.logger_name == logger_name;
+            });
+        } else {
+            ImApp::OutputCapture::instance().clear();
+            m_entries.clear();
+            m_selected_logger_index = 0;
+        }
     }
 
     ImGui::SameLine();
