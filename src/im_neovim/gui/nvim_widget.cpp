@@ -301,7 +301,6 @@ void NvimWidget::render() {
     if (window_created && (m_is_embedded || !m_embedded_window_collapsed)) {
         _handle_nvim_resize();
         _handle_keyboard_input();
-        _handle_mouse_input();
 
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -316,6 +315,12 @@ void NvimWidget::render() {
             // Re-read cursor position — _render_tabline may have advanced it.
             pos = ImGui::GetCursorScreenPos();
         }
+
+        // Mouse input must be processed AFTER the tabline so that
+        // GetCursorScreenPos() reflects the same grid origin used for
+        // rendering.  Otherwise the tabline height offsets click Y
+        // coordinates.
+        _handle_mouse_input();
 
         _render_grid(draw_list, pos, char_width, line_height);
 
