@@ -18,7 +18,7 @@ namespace ImNeovim {
 class NvimRequest;
 
 /// Reason the save dialog is being shown.
-enum class SaveDialogAction { Close };
+enum class SaveDialogAction { CloseWindow, CloseTab };
 
 /// Parsed representation of a Neovim guifont / guifontwide string.
 /// Format: "FamilyName:hNN[:b][:i]"  (e.g. "Fira Code:h12:b")
@@ -109,6 +109,9 @@ class NvimWidget : public TextWidget,
     void _show_save_modal();
     void _render_save_modal();
     void _handle_save_decision(bool save, bool discard);
+    void _switch_and_save_then_close_tab();
+    void _switch_and_close_tab_discard();
+    void _send_tab_close_command();
     void _do_open_file(const std::filesystem::path& path, bool force = false,
                        std::string_view open_command = "edit ");
 
@@ -205,6 +208,7 @@ class NvimWidget : public TextWidget,
     void _redraw_tabline_update(msgpack::object_array& args);
     void _render_tabline();
     void _switch_to_tab(uint64_t tabpage_handle);
+    void _query_tab_buffers_modified();
 
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
@@ -404,7 +408,10 @@ class NvimWidget : public TextWidget,
     bool m_needs_modified_check{false};
     // Save dialog state
     bool m_show_save_dialog{false};
-    SaveDialogAction m_save_dialog_action{SaveDialogAction::Close};
+    SaveDialogAction m_save_dialog_action{SaveDialogAction::CloseWindow};
+    // Tab-close save modal state
+    uint64_t m_pending_tab_close_handle{0};
+    std::string m_pending_tab_close_name;
 
     // Mouse, bell, and option state
     bool m_mouse_enabled{true};
@@ -469,6 +476,7 @@ class NvimWidget : public TextWidget,
     struct TabInfo {
         uint64_t handle{0};
         std::string name;
+        bool modified{false};
     };
     std::vector<TabInfo> m_tabline_tabs;
     uint64_t m_tabline_curtab{0};

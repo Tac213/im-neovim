@@ -2763,6 +2763,15 @@ void NvimWidget::_redraw_tabline_update(msgpack::object_array& args) {
     // Parse curtab
     m_tabline_curtab = static_cast<uint64_t>(_extract_handle(args.ptr[0]));
 
+    // Preserve previously queried modified flags across rebuilds so the
+    // dot/X state doesn't ping-pong while async queries are in flight.
+    std::unordered_map<uint64_t, bool> prev_modified;
+    for (const auto& t : m_tabline_tabs) {
+        if (t.modified) {
+            prev_modified[t.handle] = true;
+        }
+    }
+
     // Parse tabs array
     m_tabline_tabs.clear();
     if (args.ptr[1].type == msgpack::type::ARRAY) {
@@ -2787,6 +2796,11 @@ void NvimWidget::_redraw_tabline_update(msgpack::object_array& args) {
                         info.name = tab_map.ptr[j].val.as<std::string>();
                     }
                 }
+            }
+            // Preserve previously queried modified flag for this handle.
+            auto mit = prev_modified.find(info.handle);
+            if (mit != prev_modified.end()) {
+                info.modified = mit->second;
             }
             m_tabline_tabs.push_back(std::move(info));
         }
@@ -2845,6 +2859,114 @@ void NvimWidget::_redraw_tabline_update(msgpack::object_array& args) {
     LOG_TRACE("tabline_update: curtab={}, tabs={}, curbuf={}, buffers={}",
               m_tabline_curtab, m_tabline_tabs.size(), m_tabline_curbuf,
               m_tabline_buffers.size());
+
+    // Kick off per-tab modified queries so the UI dot is up to date.
+    _query_tab_buffers_modified();
+}
+
+void NvimWidget::_query_tab_buffers_modified() {
+    // Query each tab's current buffer modified flag so the tabline dot
+    // reflects unsaved changes.  Chains nvim_tabpage_get_win →
+    // nvim_win_get_buf → nvim_get_option_value("modified", {"buf": …}).
+    for (auto& tab : m_tabline_tabs) {
+        if (tab.handle == 0) {
+            continue;
+        }
+
+        auto self = shared_from_this();
+        uint64_t tab_handle = tab.handle;
+
+        // Step 1: get the current window for this tabpage
+        auto req1 = start_nvim_request(
+            "nvim_tabpage_get_win", 1,
+            [self, tab_handle](msgpack::object& win_result) {
+                int64_t wh = _extract_handle(win_result);
+                if (wh == 0) {
+                    return;
+                }
+                uint64_t win_handle = static_cast<uint64_t>(wh);
+
+                // Step 2: get the buffer for this window
+                auto req2 = self->start_nvim_request(
+                    "nvim_win_get_buf", 1,
+                    [self, tab_handle](msgpack::object& buf_result) {
+                        int64_t bh = _extract_handle(buf_result);
+                        if (bh == 0) {
+                            return;
+                        }
+                        uint64_t buf_handle = static_cast<uint64_t>(bh);
+
+                        // Step 3: query the buffer's "modified" option
+                        auto req3 = self->start_nvim_request(
+                            "nvim_get_option_value", 2,
+                            [self, tab_handle](msgpack::object& opt_result) {
+                                bool modified = false;
+                                if (opt_result.type == msgpack::type::BOOLEAN) {
+                                    modified = opt_result.as<bool>();
+                                } else if (opt_result.type ==
+                                           msgpack::type::POSITIVE_INTEGER) {
+                                    modified = (opt_result.as<uint32_t>() != 0);
+                                }
+                                // Update the tab's modified flag
+                                for (auto& t : self->m_tabline_tabs) {
+                                    if (t.handle == tab_handle) {
+                                        t.modified = modified;
+                                        break;
+                                    }
+                                }
+                            },
+                            nullptr);
+                        if (req3) {
+                            const std::string key{"modified"};
+                            req3->arg_str(key.size());
+                            req3->arg_str_body(key.data(), key.size());
+                            // opts dict: {"buf": buf_handle}
+                            req3->arg_map(1);
+                            {
+                                const std::string opt_key{"buf"};
+                                req3->arg_str(opt_key.size());
+                                req3->arg_str_body(opt_key.data(),
+                                                   opt_key.size());
+                                req3->arg_uint64(buf_handle);
+                            }
+                        }
+                    },
+                    nullptr);
+                if (req2) {
+                    // nvim_win_get_buf takes a Window EXT handle
+                    char payload[8];
+                    size_t payload_len = 0;
+                    if (win_handle <= 0x7f) {
+                        payload[0] = static_cast<char>(win_handle);
+                        payload_len = 1;
+                    } else {
+                        msgpack::sbuffer sbuf;
+                        msgpack::pack(sbuf, win_handle);
+                        payload_len = sbuf.size();
+                        memcpy(payload, sbuf.data(), payload_len);
+                    }
+                    req2->arg_ext(payload_len, 1);
+                    req2->arg_ext_body(payload, payload_len);
+                }
+            },
+            nullptr);
+        if (req1) {
+            // nvim_tabpage_get_win takes a Tabpage EXT handle
+            char payload[8];
+            size_t payload_len = 0;
+            if (tab_handle <= 0x7f) {
+                payload[0] = static_cast<char>(tab_handle);
+                payload_len = 1;
+            } else {
+                msgpack::sbuffer sbuf;
+                msgpack::pack(sbuf, tab_handle);
+                payload_len = sbuf.size();
+                memcpy(payload, sbuf.data(), payload_len);
+            }
+            req1->arg_ext(payload_len, 2);
+            req1->arg_ext_body(payload, payload_len);
+        }
+    }
 }
 
 // --- Cmdline event handlers (ext_cmdline) ---
@@ -3704,6 +3826,11 @@ void NvimWidget::_render_tabline() {
                 tab_flags |= ImGuiTabItemFlags_SetSelected;
             }
 
+            // Show an unsaved-document dot on modified tabs.
+            if (tab.modified) {
+                tab_flags |= ImGuiTabItemFlags_UnsavedDocument;
+            }
+
             bool open = true;
             bool is_selected =
                 ImGui::BeginTabItem(tab.name.c_str(), &open, tab_flags);
@@ -3725,22 +3852,48 @@ void NvimWidget::_render_tabline() {
         // guaranteed to be Neovim's current tabpage.  We can send
         // :tabclose directly without switching first.
         if (tab_to_close != 0 && m_tabline_tabs.size() > 1) {
-            LOG_DEBUG("tabline close: tab={}", tab_to_close);
-            auto req = start_nvim_request("nvim_command", 1, nullptr, nullptr);
-            if (req) {
-                const std::string cmd{"tabclose"};
-                req->arg_str(cmd.size());
-                req->arg_str_body(cmd.data(), cmd.size());
+            // Look up whether the closing tab is modified.
+            bool closing_modified = false;
+            for (const auto& t : m_tabline_tabs) {
+                if (t.handle == tab_to_close) {
+                    closing_modified = t.modified;
+                    break;
+                }
             }
-            // Let Neovim's next tabline_update notification drive the
-            // UI state — skip normal selection logic for this frame.
-            m_tabline_last_gui_selected = 0;
-            ImGui::EndTabBar();
-            if (!ImGui::IsWindowFocused()) {
-                ImGui::PopStyleColor(2); // TabUnfocusedActive pair
+
+            if (closing_modified) {
+                // Show save modal instead of closing immediately.
+                m_pending_tab_close_handle = tab_to_close;
+                for (const auto& t : m_tabline_tabs) {
+                    if (t.handle == tab_to_close) {
+                        m_pending_tab_close_name = t.name;
+                        break;
+                    }
+                }
+                m_save_dialog_action = SaveDialogAction::CloseTab;
+                _show_save_modal();
+                // Don't return early — let the modal render this frame.
+                // Fall through to normal selection logic so the tab
+                // stays selected while the dialog is shown.
+            } else {
+                LOG_DEBUG("tabline close: tab={}", tab_to_close);
+                auto req =
+                    start_nvim_request("nvim_command", 1, nullptr, nullptr);
+                if (req) {
+                    const std::string cmd{"tabclose"};
+                    req->arg_str(cmd.size());
+                    req->arg_str_body(cmd.data(), cmd.size());
+                }
+                // Let Neovim's next tabline_update notification drive the
+                // UI state — skip normal selection logic for this frame.
+                m_tabline_last_gui_selected = 0;
+                ImGui::EndTabBar();
+                if (!ImGui::IsWindowFocused()) {
+                    ImGui::PopStyleColor(2); // TabUnfocusedActive pair
+                }
+                ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
+                return;
             }
-            ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
-            return;
         }
 
         // BeginTabItem returns true every frame for the selected tab
@@ -5157,7 +5310,7 @@ ImGuiWindowFlags NvimWidget::get_additional_window_flags() const {
 }
 
 void NvimWidget::on_close_attempted() {
-    m_save_dialog_action = SaveDialogAction::Close;
+    m_save_dialog_action = SaveDialogAction::CloseWindow;
     _show_save_modal();
 }
 
@@ -5205,7 +5358,127 @@ void NvimWidget::_show_save_modal() {
     }
 }
 
+void NvimWidget::_switch_and_save_then_close_tab() {
+    // Switch to the target tab, write, then close it.
+    uint64_t tab_handle = m_pending_tab_close_handle;
+    auto self = shared_from_this();
+    auto req1 = start_nvim_request(
+        "nvim_set_current_tabpage", 1,
+        [self, tab_handle](msgpack::object&) {
+            auto req2 = self->start_nvim_request(
+                "nvim_command", 1,
+                [self](msgpack::object&) {
+                    // After save, close the tab.
+                    self->_send_tab_close_command();
+                },
+                [self](int32_t error_code, const std::string& error_msg) {
+                    LOG_ERROR("Failed to save file: {} - {}", error_code,
+                              error_msg);
+                    // Still close the tab even if save failed (user chose
+                    // Save — the write may have partially succeeded).
+                    self->_send_tab_close_command();
+                });
+            if (req2) {
+                const std::string cmd{"write"};
+                req2->arg_str(cmd.size());
+                req2->arg_str_body(cmd.data(), cmd.size());
+            }
+        },
+        [self](int32_t error_code, const std::string& error_msg) {
+            LOG_ERROR("Failed to switch tab for save: {} - {}", error_code,
+                      error_msg);
+            // Best-effort: try to close anyway.
+            self->_send_tab_close_command();
+        });
+    if (req1) {
+        // Tabpage EXT handle packing
+        char payload[8];
+        size_t payload_len = 0;
+        if (tab_handle <= 0x7f) {
+            payload[0] = static_cast<char>(tab_handle);
+            payload_len = 1;
+        } else {
+            msgpack::sbuffer sbuf;
+            msgpack::pack(sbuf, tab_handle);
+            payload_len = sbuf.size();
+            memcpy(payload, sbuf.data(), payload_len);
+        }
+        req1->arg_ext(payload_len, 2); // 2 = kObjectTypeTabpage
+        req1->arg_ext_body(payload, payload_len);
+    }
+}
+
+void NvimWidget::_switch_and_close_tab_discard() {
+    // Switch to the target tab, then force-close it discarding changes.
+    uint64_t tab_handle = m_pending_tab_close_handle;
+    auto self = shared_from_this();
+    auto req1 = start_nvim_request(
+        "nvim_set_current_tabpage", 1,
+        [self, tab_handle](msgpack::object&) {
+            // :tabclose! forces close discarding unsaved changes.
+            self->_send_tab_close_command();
+        },
+        [self](int32_t error_code, const std::string& error_msg) {
+            LOG_ERROR("Failed to switch tab for discard: {} - {}", error_code,
+                      error_msg);
+            self->_send_tab_close_command();
+        });
+    if (req1) {
+        char payload[8];
+        size_t payload_len = 0;
+        if (tab_handle <= 0x7f) {
+            payload[0] = static_cast<char>(tab_handle);
+            payload_len = 1;
+        } else {
+            msgpack::sbuffer sbuf;
+            msgpack::pack(sbuf, tab_handle);
+            payload_len = sbuf.size();
+            memcpy(payload, sbuf.data(), payload_len);
+        }
+        req1->arg_ext(payload_len, 2);
+        req1->arg_ext_body(payload, payload_len);
+    }
+}
+
+void NvimWidget::_send_tab_close_command() {
+    // :bdelete! force-deletes the current buffer (discarding changes),
+    // which also closes the tabpage when it was the last window showing
+    // that buffer.  This is preferred over :tabclose! because it cleans
+    // up the buffer's modified state — reopening the same file starts
+    // with a clean, unmodified buffer.
+    auto self = shared_from_this();
+    auto req = start_nvim_request(
+        "nvim_command", 1,
+        [self](msgpack::object&) {
+            self->m_pending_tab_close_handle = 0;
+            self->m_pending_tab_close_name.clear();
+        },
+        [self](int32_t error_code, const std::string& error_msg) {
+            LOG_ERROR("Failed to close tab: {} - {}", error_code, error_msg);
+            self->m_pending_tab_close_handle = 0;
+            self->m_pending_tab_close_name.clear();
+        });
+    if (req) {
+        const std::string cmd{"bdelete!"};
+        req->arg_str(cmd.size());
+        req->arg_str_body(cmd.data(), cmd.size());
+    }
+}
+
 void NvimWidget::_handle_save_decision(bool save, bool discard) {
+    if (m_save_dialog_action == SaveDialogAction::CloseTab) {
+        if (save) {
+            _switch_and_save_then_close_tab();
+        } else if (discard) {
+            _switch_and_close_tab_discard();
+        }
+        // Cancel: do nothing, just dismiss.
+        m_show_save_dialog = false;
+        ImGui::CloseCurrentPopup();
+        return;
+    }
+
+    // --- CloseWindow path (existing behavior) ---
     if (save) {
         // Send :w to Neovim, then close the window.
         auto self = shared_from_this();
@@ -5265,7 +5538,12 @@ void NvimWidget::_render_save_modal() {
     if (ImGui::BeginPopupModal("##SaveModified", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         // Determine the display filename
-        std::string display_name = m_window_title;
+        std::string display_name;
+        if (m_save_dialog_action == SaveDialogAction::CloseTab) {
+            display_name = m_pending_tab_close_name;
+        } else {
+            display_name = m_window_title;
+        }
         if (display_name.empty() || display_name == "nvim (no file)") {
             display_name = "untitled";
         }
