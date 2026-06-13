@@ -77,9 +77,9 @@ Application* create_im_app(int argc, char** argv) {
         // cases correctly regardless.
 
         if (std::filesystem::is_directory(status)) {
-            ImNeovim::g_workspace.add_folder(p);
+            ImNeovim::globals::g_workspace.add_folder(p);
         } else if (std::filesystem::is_regular_file(status)) {
-            ImNeovim::g_pending_startup_files.push_back(
+            ImNeovim::globals::g_pending_startup_files.push_back(
                 std::filesystem::weakly_canonical(p));
         } else if (!std::filesystem::exists(status)) {
             // File does not exist yet — check if the parent
@@ -89,7 +89,7 @@ Application* create_im_app(int argc, char** argv) {
             // CWD, which always exists.
             auto parent = p.parent_path();
             if (parent.empty() || std::filesystem::is_directory(parent, ec)) {
-                ImNeovim::g_pending_startup_files.push_back(
+                ImNeovim::globals::g_pending_startup_files.push_back(
                     std::filesystem::weakly_canonical(p));
             }
         }
@@ -120,8 +120,8 @@ Application* create_im_app(int argc, char** argv) {
     // startup queue so NvimWidget picks them up on the next frame.
     instance_mgr->on_remote_open_files.connect(
         [](const std::vector<std::filesystem::path>& files) {
-            ImNeovim::g_pending_startup_files.insert(
-                ImNeovim::g_pending_startup_files.end(), files.begin(),
+            ImNeovim::globals::g_pending_startup_files.insert(
+                ImNeovim::globals::g_pending_startup_files.end(), files.begin(),
                 files.end());
         });
 

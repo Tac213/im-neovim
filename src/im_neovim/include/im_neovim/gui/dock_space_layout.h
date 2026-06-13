@@ -167,7 +167,7 @@ class DockSpaceLayout {
     /**
      * @brief Queues an adaptive layout rebuild for after the current
      * frame. The rebuild chooses single-panel or 3-way-split based on
-     * whether g_workspace has folders.
+     * whether ImNeovim::globals::g_workspace has folders.
      */
     void queue_adaptive_rebuild() { m_pending_adaptive_rebuild = true; }
     bool is_adaptive_rebuild_pending() const {

@@ -9,7 +9,6 @@
 namespace ImNeovim {
 namespace globals {
 extern uv_loop_t* g_uv_loop;
-}
 
 extern Workspace g_workspace;
 
@@ -18,4 +17,5 @@ extern Workspace g_workspace;
 /// by NvimWidget when nvim_ui_attach completes.
 extern std::vector<std::filesystem::path> g_pending_startup_files;
 
+} // namespace globals
 } // namespace ImNeovim

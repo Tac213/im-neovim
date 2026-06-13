@@ -230,7 +230,7 @@ void Terminal::paste_from_clipboard() const {
 
 void Terminal::_start_shell() {
     // Determine the working directory from the workspace.
-    auto cwd = g_workspace.first_folder_or_home();
+    auto cwd = globals::g_workspace.first_folder_or_home();
 
     if (m_pty->launch(m_state.row, m_state.col, cwd)) {
         m_read_thread = std::thread(&Terminal::_read_output, this);

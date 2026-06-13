@@ -145,7 +145,7 @@ void LayerMainWindow::on_attach() {
     }
 
     // Keep nvim's working directory in sync with the first workspace folder.
-    g_workspace.on_changed.connect(
+    globals::g_workspace.on_changed.connect(
         std::bind_front(&LayerMainWindow::_sync_nvim_cwd, this));
 
     // Workspace-aware panel visibility.
@@ -153,7 +153,7 @@ void LayerMainWindow::on_attach() {
     // terminal by default to give nvim the full window.
     // Manual View > File Tree / Terminal menu toggles override auto-hide
     // via m_*_forced_visible.
-    g_workspace.on_changed.connect(
+    globals::g_workspace.on_changed.connect(
         std::bind_front(&LayerMainWindow::_update_panel_visibility, this));
     _update_panel_visibility();
 
@@ -205,7 +205,7 @@ void LayerMainWindow::on_imgui_render() {
                     m_output_widget->window_title());
 
                 // Build the appropriate layout based on visibility.
-                bool has_folders = !g_workspace.empty();
+                bool has_folders = !globals::g_workspace.empty();
                 bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
                 bool show_t = m_terminal_forced_visible.value_or(has_folders);
                 bool show_o = m_output_forced_visible.value_or(has_folders);
@@ -238,7 +238,7 @@ void LayerMainWindow::on_imgui_render() {
     // discrepancy here so that menu checkmarks stay correct and the
     // widget does not re-appear on the next _update_panel_visibility() call.
     {
-        bool has_folders = !g_workspace.empty();
+        bool has_folders = !globals::g_workspace.empty();
         bool changed = false;
 
         auto sync_one = [&](bool widget_visible, std::optional<bool>& forced,
@@ -300,7 +300,7 @@ void LayerMainWindow::on_imgui_render() {
         m_terminal_forced_visible.reset();
 
         // Choose layout based on current visibility state.
-        bool has_folders = !g_workspace.empty();
+        bool has_folders = !globals::g_workspace.empty();
         bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
         bool show_t = m_terminal_forced_visible.value_or(has_folders);
         bool show_o = m_output_forced_visible.value_or(has_folders);
@@ -318,7 +318,7 @@ void LayerMainWindow::on_imgui_render() {
             m_file_tree->window_title(), m_nvim->window_title(),
             m_terminal->window_title(), m_output_widget->window_title());
 
-        bool has_folders = !g_workspace.empty();
+        bool has_folders = !globals::g_workspace.empty();
         bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
         bool show_t = m_terminal_forced_visible.value_or(has_folders);
         bool show_o = m_output_forced_visible.value_or(has_folders);
@@ -445,7 +445,7 @@ void LayerMainWindow::_on_file_clicked(const std::filesystem::path& path) {
 void LayerMainWindow::
     _on_remove_folder( // NOLINT(readability-convert-member-functions-to-static)
         const std::filesystem::path& path) {
-    g_workspace.remove_folder(path);
+    globals::g_workspace.remove_folder(path);
 }
 
 void LayerMainWindow::
@@ -467,7 +467,8 @@ void LayerMainWindow::_on_about() { m_about_panel->show(); }
 void LayerMainWindow::
     _open_folder() { // NOLINT(readability-convert-member-functions-to-static)
 #ifdef IM_APP_WIN32
-    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    std::filesystem::path start_dir =
+        globals::g_workspace.first_folder_or_home();
     const wchar_t* selected_w =
         tinyfd_selectFolderDialogW(L"Open Folder", start_dir.c_str());
     if (selected_w == nullptr) {
@@ -475,7 +476,8 @@ void LayerMainWindow::
     }
     std::filesystem::path selected_path{selected_w};
 #else
-    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    std::filesystem::path start_dir =
+        globals::g_workspace.first_folder_or_home();
     std::string start_str = ImApp::path_to_string(start_dir);
     const char* selected =
         tinyfd_selectFolderDialog("Open Folder", start_str.c_str());
@@ -497,14 +499,15 @@ void LayerMainWindow::
     }
 
     // Replace the workspace with the selected folder.
-    g_workspace.replace_with(selected_path);
+    globals::g_workspace.replace_with(selected_path);
 }
 
 void LayerMainWindow::
     _add_folder_to_workspace() { // NOLINT(readability-convert-member-functions-to-static)
 #ifdef IM_APP_WIN32
     // Start the dialog at the first workspace folder (or home).
-    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    std::filesystem::path start_dir =
+        globals::g_workspace.first_folder_or_home();
     const wchar_t* selected_w = tinyfd_selectFolderDialogW(
         L"Add Folder to Workspace", start_dir.c_str());
     if (selected_w == nullptr) {
@@ -512,7 +515,8 @@ void LayerMainWindow::
     }
     std::filesystem::path selected_path{selected_w};
 #else
-    std::filesystem::path start_dir = g_workspace.first_folder_or_home();
+    std::filesystem::path start_dir =
+        globals::g_workspace.first_folder_or_home();
     std::string start_str = ImApp::path_to_string(start_dir);
     const char* selected =
         tinyfd_selectFolderDialog("Add Folder to Workspace", start_str.c_str());
@@ -521,7 +525,7 @@ void LayerMainWindow::
     }
     std::filesystem::path selected_path{selected};
 #endif
-    g_workspace.add_folder(selected_path);
+    globals::g_workspace.add_folder(selected_path);
 }
 
 void LayerMainWindow::_sync_nvim_cwd() {
@@ -529,7 +533,7 @@ void LayerMainWindow::_sync_nvim_cwd() {
         return;
     }
 
-    std::filesystem::path cwd = g_workspace.first_folder_or_home();
+    std::filesystem::path cwd = globals::g_workspace.first_folder_or_home();
     std::string path = ImApp::path_to_string(cwd);
     std::replace(path.begin(), path.end(), '\\', '/');
     std::string cmd = "cd " + path;
@@ -552,7 +556,7 @@ void LayerMainWindow::_sync_nvim_cwd() {
 }
 
 void LayerMainWindow::_update_panel_visibility() {
-    bool has_folders = !g_workspace.empty();
+    bool has_folders = !globals::g_workspace.empty();
 
     // Manual override takes priority; fall back to workspace state.
     bool ft_vis = m_file_tree_forced_visible.value_or(has_folders);
@@ -585,7 +589,7 @@ void LayerMainWindow::_update_panel_visibility() {
 }
 
 void LayerMainWindow::_toggle_file_tree() {
-    bool has_folders = !g_workspace.empty();
+    bool has_folders = !globals::g_workspace.empty();
     bool current = m_file_tree_forced_visible.value_or(has_folders);
     bool next = !current;
     m_file_tree_forced_visible = (next == has_folders)
@@ -595,7 +599,7 @@ void LayerMainWindow::_toggle_file_tree() {
 }
 
 void LayerMainWindow::_toggle_terminal() {
-    bool has_folders = !g_workspace.empty();
+    bool has_folders = !globals::g_workspace.empty();
     bool currently_visible = m_terminal_forced_visible.value_or(has_folders);
 
     if (!currently_visible) {
@@ -631,7 +635,7 @@ void LayerMainWindow::_toggle_terminal() {
 }
 
 void LayerMainWindow::_toggle_output() {
-    bool has_folders = !g_workspace.empty();
+    bool has_folders = !globals::g_workspace.empty();
     bool currently_visible = m_output_forced_visible.value_or(has_folders);
 
     if (!currently_visible) {

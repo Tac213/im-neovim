@@ -162,7 +162,8 @@ NvimWidget::NvimWidget() {
     m_window_icon.clear();
 
     // Use the first workspace folder (or home directory if empty).
-    m_nvim_cwd = ImApp::path_to_string(g_workspace.first_folder_or_home());
+    m_nvim_cwd =
+        ImApp::path_to_string(globals::g_workspace.first_folder_or_home());
 
     // Initialize with safe default size
     m_state.row = 24;
@@ -1187,12 +1188,12 @@ void NvimWidget::_initialize() {
 }
 
 void NvimWidget::_process_startup_files() {
-    if (g_pending_startup_files.empty()) {
+    if (globals::g_pending_startup_files.empty()) {
         return;
     }
 
-    auto files = std::move(g_pending_startup_files);
-    g_pending_startup_files.clear();
+    auto files = std::move(globals::g_pending_startup_files);
+    globals::g_pending_startup_files.clear();
 
     LOG_INFO("Processing {} startup file(s)", files.size());
 

@@ -9,7 +9,7 @@ namespace ImNeovim {
 
 LayerInstanceManager::LayerInstanceManager() {
     // Derive the instance key from the global workspace.
-    m_instance_key = g_workspace.derive_instance_key();
+    m_instance_key = globals::g_workspace.derive_instance_key();
 
     if (m_instance_key.empty()) {
         // Empty workspace — no instance locking, always primary.
@@ -30,7 +30,7 @@ void LayerInstanceManager::on_attach() {
     _rebind_ipc();
 
     // Listen for workspace changes so we can rebind the lock/IPC.
-    m_workspace_changed_conn = g_workspace.on_changed.connect(
+    m_workspace_changed_conn = globals::g_workspace.on_changed.connect(
         std::bind_front(&LayerInstanceManager::_on_workspace_changed, this));
 }
 
@@ -44,7 +44,7 @@ void LayerInstanceManager::on_update() {
 
 void LayerInstanceManager::on_detach() {
     if (m_workspace_changed_conn != 0) {
-        g_workspace.on_changed.disconnect(m_workspace_changed_conn);
+        globals::g_workspace.on_changed.disconnect(m_workspace_changed_conn);
         m_workspace_changed_conn = 0;
     }
     m_ipc.reset();
@@ -132,7 +132,7 @@ void LayerInstanceManager::_handle_ipc_message(const std::string& message) {
 }
 
 void LayerInstanceManager::_on_workspace_changed() {
-    std::string new_key = g_workspace.derive_instance_key();
+    std::string new_key = globals::g_workspace.derive_instance_key();
 
     if (new_key == m_instance_key) {
         return; // No change.

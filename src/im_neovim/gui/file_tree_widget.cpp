@@ -13,7 +13,7 @@ FileTreeWidget::FileTreeWidget() : m_needs_refresh(true) {
 
     // React to workspace changes — defer rebuild to avoid
     // iterator invalidation during rendering.
-    m_workspace_conn = g_workspace.on_changed.connect(
+    m_workspace_conn = globals::g_workspace.on_changed.connect(
         std::bind_front(&FileTreeWidget::_on_workspace_changed, this));
 
     // Start watching workspace root(s) for external changes.
@@ -23,13 +23,13 @@ FileTreeWidget::FileTreeWidget() : m_needs_refresh(true) {
 FileTreeWidget::~FileTreeWidget() {
     _stop_watching();
     if (m_workspace_conn != 0) {
-        g_workspace.on_changed.disconnect(m_workspace_conn);
+        globals::g_workspace.on_changed.disconnect(m_workspace_conn);
     }
 }
 
 void FileTreeWidget::_rebuild_root_entries() {
     m_root_entries.clear();
-    for (const auto& folder : g_workspace.folders()) {
+    for (const auto& folder : globals::g_workspace.folders()) {
         DirectoryEntry entry;
         entry.path = folder;
         entry.is_directory = true;
@@ -102,7 +102,7 @@ void FileTreeWidget::_start_watching() {
         return;
     }
 
-    for (const auto& folder : g_workspace.folders()) {
+    for (const auto& folder : globals::g_workspace.folders()) {
         auto* handle = new uv_fs_event_t;
         int r = uv_fs_event_init(globals::g_uv_loop, handle);
         if (r < 0) {
