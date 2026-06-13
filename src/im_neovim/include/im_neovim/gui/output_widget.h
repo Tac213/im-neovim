@@ -67,6 +67,9 @@ class OutputWidget {
     // --- Auto-scroll ---
     bool m_auto_scroll{true};
 
+    // --- Timestamp visibility ---
+    bool m_show_timestamps{false};
+
     // --- Logger filter (combo box) ---
     std::vector<std::string> m_logger_names;
     int m_selected_logger_index{0};

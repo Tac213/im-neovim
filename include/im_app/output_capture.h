@@ -21,6 +21,7 @@ struct LogEntry {
     int level; // spdlog::level::level_enum
     std::string logger_name;
     std::string message;
+    std::string payload;
 };
 
 /**
@@ -68,7 +69,8 @@ class OutputCapture {
      * log entry in the ring buffer.  Public so that the sink (defined in
      * the .cpp file) can access it.
      */
-    void add_entry(int level, std::string logger_name, std::string message);
+    void add_entry(int level, std::string logger_name, std::string message,
+                   std::string payload);
 
     OutputCapture(const OutputCapture&) = delete;
     OutputCapture& operator=(const OutputCapture&) = delete;

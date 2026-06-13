@@ -24,7 +24,8 @@ class OutputCaptureSink : public spdlog::sinks::base_sink<Mutex> {
         OutputCapture::instance().add_entry(
             static_cast<int>(msg.level),
             std::string(msg.logger_name.data(), msg.logger_name.size()),
-            std::move(message));
+            std::move(message),
+            std::string(msg.payload.data(), msg.payload.size()));
     }
 
     void flush_() override {}
@@ -69,15 +70,19 @@ void OutputCapture::clear() {
 }
 
 void OutputCapture::add_entry(int level, std::string logger_name,
-                              std::string message) {
+                              std::string message, std::string payload) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // Remove trailing newline that spdlog formatters typically append.
     if (!message.empty() && message.back() == '\n') {
         message.pop_back();
     }
+    if (!payload.empty() && payload.back() == '\n') {
+        payload.pop_back();
+    }
 
-    m_entries.push_back({level, std::move(logger_name), std::move(message)});
+    m_entries.push_back({level, std::move(logger_name), std::move(message),
+                         std::move(payload)});
 
     // Keep the buffer bounded.
     while (m_entries.size() > g_max_entries) {

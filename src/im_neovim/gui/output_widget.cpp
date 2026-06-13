@@ -123,7 +123,8 @@ void OutputWidget::_render_toolbar() {
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
                             ImGui::CalcTextSize("Clear").x -
                             ImGui::CalcTextSize("Auto-scroll").x -
-                            ImGui::GetStyle().ItemSpacing.x * 4 -
+                            ImGui::CalcTextSize("Show timestamps").x -
+                            ImGui::GetStyle().ItemSpacing.x * 5 -
                             ImGui::GetStyle().FramePadding.x * 2);
     ImGui::InputTextWithHint("##output_filter", "Filter...", m_filter_buffer,
                              sizeof(m_filter_buffer));
@@ -141,6 +142,11 @@ void OutputWidget::_render_toolbar() {
 
     // -- Auto-scroll toggle --
     ImGui::Checkbox("Auto-scroll", &m_auto_scroll);
+
+    ImGui::SameLine();
+
+    // -- Show timestamps toggle --
+    ImGui::Checkbox("Show timestamps", &m_show_timestamps);
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +192,7 @@ void OutputWidget::_render_log_entries() {
         }
 
         if (has_filter) {
-            std::string lower_msg = entry.message;
+            std::string lower_msg = entry.payload;
             std::transform(lower_msg.begin(), lower_msg.end(),
                            lower_msg.begin(),
                            [](unsigned char c) { return std::tolower(c); });
@@ -217,7 +223,11 @@ void OutputWidget::_render_log_entries() {
                 const auto* entry = visible_entries[static_cast<size_t>(i)];
                 ImVec4 color = _color_for_level(entry->level);
                 ImGui::PushStyleColor(ImGuiCol_Text, color);
-                ImGui::TextUnformatted(entry->message.c_str());
+                if (m_show_timestamps) {
+                    ImGui::TextUnformatted(entry->message.c_str());
+                } else {
+                    ImGui::TextUnformatted(entry->payload.c_str());
+                }
                 ImGui::PopStyleColor();
             }
         }
