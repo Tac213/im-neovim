@@ -3677,12 +3677,15 @@ void NvimWidget::_render_tabline() {
 
     if (ImGui::BeginTabBar("##NvimTabline", tab_bar_flags)) {
         uint64_t gui_selected_this_frame = 0;
+        uint64_t tab_to_close = 0; // Set when user clicks a close button
 
         for (const auto& tab : m_tabline_tabs) {
-            // No SetSelected — ImGui remembers the selected tab across
-            // frames naturally.  We detect user clicks by comparing the
-            // current selection against the previous frame's selection.
-            ImGuiTabItemFlags tab_flags = ImGuiTabItemFlags_NoCloseButton;
+            // Show a close button only on the active tab; hide it on
+            // all others (matching common tab-bar UX patterns).
+            ImGuiTabItemFlags tab_flags = ImGuiTabItemFlags_None;
+            if (tab.handle != m_tabline_curtab) {
+                tab_flags |= ImGuiTabItemFlags_NoCloseButton;
+            }
 
             // When Neovim changed the tabpage externally (e.g. :tabnext),
             // force-sync ImGui's selection on the next frame.
@@ -3697,6 +3700,36 @@ void NvimWidget::_render_tabline() {
                 gui_selected_this_frame = tab.handle;
                 ImGui::EndTabItem();
             }
+
+            // When the close button is clicked, ImGui sets *p_open to
+            // false.  Record the handle for processing after the loop
+            // (don't modify containers while iterating).
+            if (!open) {
+                tab_to_close = tab.handle;
+            }
+        }
+
+        // --- Close-button handling ---
+        // The close button only appears on the active tab, which is
+        // guaranteed to be Neovim's current tabpage.  We can send
+        // :tabclose directly without switching first.
+        if (tab_to_close != 0 && m_tabline_tabs.size() > 1) {
+            LOG_DEBUG("tabline close: tab={}", tab_to_close);
+            auto req = start_nvim_request("nvim_command", 1, nullptr, nullptr);
+            if (req) {
+                const std::string cmd{"tabclose"};
+                req->arg_str(cmd.size());
+                req->arg_str_body(cmd.data(), cmd.size());
+            }
+            // Let Neovim's next tabline_update notification drive the
+            // UI state — skip normal selection logic for this frame.
+            m_tabline_last_gui_selected = 0;
+            ImGui::EndTabBar();
+            if (!ImGui::IsWindowFocused()) {
+                ImGui::PopStyleColor(2); // TabUnfocusedActive pair
+            }
+            ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
+            return;
         }
 
         // BeginTabItem returns true every frame for the selected tab
