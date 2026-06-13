@@ -3794,15 +3794,15 @@ void NvimWidget::_render_tabline() {
     // Match the dock tab bar styling for visual consistency.
     ImGui::PushStyleColor(ImGuiCol_Tab, ImGui::GetStyleColorVec4(ImGuiCol_Tab));
     ImGui::PushStyleColor(ImGuiCol_TabActive,
-                          ImGui::GetStyleColorVec4(ImGuiCol_TabActive));
+                          ImGui::GetStyleColorVec4(ImGuiCol_TabSelected));
     ImGui::PushStyleColor(ImGuiCol_TabHovered,
                           ImGui::GetStyleColorVec4(ImGuiCol_TabHovered));
     if (!ImGui::IsWindowFocused()) {
-        ImGui::PushStyleColor(ImGuiCol_Tab, ImGui::GetStyleColorVec4(
-                                                ImGuiCol_TabUnfocusedActive));
+        ImGui::PushStyleColor(ImGuiCol_Tab,
+                              ImGui::GetStyleColorVec4(ImGuiCol_TabDimmed));
         ImGui::PushStyleColor(
             ImGuiCol_TabActive,
-            ImGui::GetStyleColorVec4(ImGuiCol_TabUnfocusedActive));
+            ImGui::GetStyleColorVec4(ImGuiCol_TabDimmedSelected));
     }
 
     ImGuiTabBarFlags tab_bar_flags =
@@ -3889,7 +3889,8 @@ void NvimWidget::_render_tabline() {
                 m_tabline_last_gui_selected = 0;
                 ImGui::EndTabBar();
                 if (!ImGui::IsWindowFocused()) {
-                    ImGui::PopStyleColor(2); // TabUnfocusedActive pair
+                    ImGui::PopStyleColor(
+                        2); // TabDimmed, TabDimmedSelected override
                 }
                 ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
                 return;
@@ -3930,7 +3931,7 @@ void NvimWidget::_render_tabline() {
     }
 
     if (!ImGui::IsWindowFocused()) {
-        ImGui::PopStyleColor(2); // TabUnfocusedActive pair
+        ImGui::PopStyleColor(2); // TabDimmed, TabDimmedSelected override
     }
     ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
 
