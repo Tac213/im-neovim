@@ -217,15 +217,11 @@ NvimWidget::~NvimWidget() {
 }
 
 void NvimWidget::open_file(const std::filesystem::path& path) {
-    // If the current buffer is modified, queue the save dialog instead
-    // of immediately opening the new file.
-    if (m_buffer_modified) {
-        m_pending_file_path = path;
-        m_save_dialog_action = SaveDialogAction::OpenFile;
-        _show_save_modal();
-        return;
-    }
-    _do_open_file(path);
+    // Open with :edit when no buffer is active, :tabedit otherwise.
+    // tabedit opens in a new tab, leaving any modified buffer untouched
+    // in its existing tab — no save-dialog guard is needed here.
+    std::string_view cmd = m_has_active_buffer ? "tabedit " : "edit ";
+    _do_open_file(path, false, cmd);
 }
 
 void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force,
@@ -1218,12 +1214,12 @@ void NvimWidget::_process_startup_files() {
 
     for (size_t i = 0; i < files.size(); ++i) {
         // First file with :edit when no buffer is active,
-        // :vsplit otherwise.
+        // :tabedit otherwise.
         std::string_view cmd;
         if (!m_has_active_buffer && i == 0) {
             cmd = "edit ";
         } else {
-            cmd = "vsplit ";
+            cmd = "tabedit ";
         }
         _do_open_file(files[i], false, cmd);
     }
@@ -5211,27 +5207,18 @@ void NvimWidget::_show_save_modal() {
 
 void NvimWidget::_handle_save_decision(bool save, bool discard) {
     if (save) {
-        // Send :w to Neovim, then proceed after save completes
+        // Send :w to Neovim, then close the window.
         auto self = shared_from_this();
-        auto action = m_save_dialog_action;
-        auto pending_path = m_pending_file_path;
         auto req = start_nvim_request(
             "nvim_command", 1,
-            [self, action, pending_path](msgpack::object&) {
+            [self](msgpack::object&) {
                 self->m_buffer_modified = false;
                 self->m_needs_modified_check = true;
-                // Proceed with the pending action
-                if (action == SaveDialogAction::Close) {
-                    self->set_visible(false);
-                } else if (action == SaveDialogAction::OpenFile &&
-                           !pending_path.empty()) {
-                    self->_do_open_file(pending_path);
-                }
+                self->set_visible(false);
             },
-            [self](int32_t error_code, const std::string& error_msg) {
+            [](int32_t error_code, const std::string& error_msg) {
                 LOG_ERROR("Failed to save file: {} - {}", error_code,
                           error_msg);
-                // Still dismiss dialog on error to avoid getting stuck
             });
         if (req) {
             const std::string cmd{"write"};
@@ -5239,22 +5226,14 @@ void NvimWidget::_handle_save_decision(bool save, bool discard) {
             req->arg_str_body(cmd.data(), cmd.size());
         }
     } else if (discard) {
-        // Discard changes: tell Neovim to force-delete the buffer,
-        // then proceed with close or open.
+        // Discard changes: force-delete the buffer, then close the window.
         m_buffer_modified = false;
         auto self = shared_from_this();
-        auto action = m_save_dialog_action;
-        auto pending_path = m_pending_file_path;
         auto req = start_nvim_request(
             "nvim_command", 1,
-            [self, action, pending_path](msgpack::object&) {
+            [self](msgpack::object&) {
                 self->m_needs_modified_check = true;
-                if (action == SaveDialogAction::Close) {
-                    self->set_visible(false);
-                } else if (action == SaveDialogAction::OpenFile &&
-                           !pending_path.empty()) {
-                    self->_do_open_file(pending_path, true);
-                }
+                self->set_visible(false);
             },
             [](int32_t error_code, const std::string& error_msg) {
                 LOG_ERROR("Failed to discard changes: {} - {}", error_code,
@@ -5269,7 +5248,6 @@ void NvimWidget::_handle_save_decision(bool save, bool discard) {
     // Cancel: do nothing, dismiss dialog
 
     m_show_save_dialog = false;
-    m_pending_file_path.clear();
     ImGui::CloseCurrentPopup();
 }
 

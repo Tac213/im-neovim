@@ -18,7 +18,7 @@ namespace ImNeovim {
 class NvimRequest;
 
 /// Reason the save dialog is being shown.
-enum class SaveDialogAction { Close, OpenFile };
+enum class SaveDialogAction { Close };
 
 /// Parsed representation of a Neovim guifont / guifontwide string.
 /// Format: "FamilyName:hNN[:b][:i]"  (e.g. "Fira Code:h12:b")
@@ -404,7 +404,6 @@ class NvimWidget : public TextWidget,
     bool m_needs_modified_check{false};
     // Save dialog state
     bool m_show_save_dialog{false};
-    std::filesystem::path m_pending_file_path;
     SaveDialogAction m_save_dialog_action{SaveDialogAction::Close};
 
     // Mouse, bell, and option state
