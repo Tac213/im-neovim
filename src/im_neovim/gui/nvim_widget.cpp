@@ -308,6 +308,15 @@ void NvimWidget::render() {
         float char_width = ImGui::GetFontBaked()->GetCharAdvance('M');
         float line_height = ImGui::GetTextLineHeight();
 
+        // Render tabline at the top (ext_tabline) before the grid.
+        // The tabline uses ImGui widgets so it consumes cursor area,
+        // shifting the grid origin down naturally.
+        if (m_tabline_visible) {
+            _render_tabline();
+            // Re-read cursor position — _render_tabline may have advanced it.
+            pos = ImGui::GetCursorScreenPos();
+        }
+
         _render_grid(draw_list, pos, char_width, line_height);
 
         if (m_msg_visible || m_msg_history_visible || m_msg_showmode_visible) {
@@ -1148,7 +1157,7 @@ void NvimWidget::_initialize() {
         nullptr);
     req->arg_uint32(m_state.col);
     req->arg_uint32(m_state.row);
-    req->arg_map(6);
+    req->arg_map(7);
     {
         std::string rgb_key{"rgb"};
         req->arg_str(rgb_key.size());
@@ -1182,6 +1191,11 @@ void NvimWidget::_initialize() {
         std::string messages_key{"ext_messages"};
         req->arg_str(messages_key.size());
         req->arg_str_body(messages_key.c_str(), messages_key.size());
+        req->arg_true();
+
+        std::string tabline_key{"ext_tabline"};
+        req->arg_str(tabline_key.size());
+        req->arg_str_body(tabline_key.c_str(), tabline_key.size());
         req->arg_true();
     }
     m_multigrid_enabled = true;
@@ -1443,6 +1457,9 @@ void NvimWidget::_handle_nvim_redraw(std::string_view operation,
         break;
     case _hash("msg_set_pos"):
         _redraw_msg_set_pos(args);
+        break;
+    case _hash("tabline_update"):
+        _redraw_tabline_update(args);
         break;
     default:
         LOG_TRACE("Unhandled redraw operation: {}", operation);
@@ -2726,6 +2743,98 @@ void NvimWidget::_redraw_msg_set_pos(msgpack::object_array& args) {
               grid_id, row, scrolled, sep_char, zindex, compindex);
 }
 
+// =========================================================================
+// Tabline event handler (ext_tabline)
+// =========================================================================
+
+void NvimWidget::_redraw_tabline_update(msgpack::object_array& args) {
+    // Format: [curtab, tabs, curbuf, buffers]
+    //   tabs:    [{ "tab": EXT(Tabpage), "name": STR }, ...]
+    //   buffers: [{ "buffer": EXT(Buffer), "name": STR }, ...]
+    // curbuf and buffers were added in API level 7.
+
+    if (args.size < 2) {
+        LOG_WARN("tabline_update: expected at least 2 arguments, got {}",
+                 args.size);
+        return;
+    }
+
+    // Parse curtab
+    m_tabline_curtab = static_cast<uint64_t>(_extract_handle(args.ptr[0]));
+
+    // Parse tabs array
+    m_tabline_tabs.clear();
+    if (args.ptr[1].type == msgpack::type::ARRAY) {
+        msgpack::object_array& tabs_arr = args.ptr[1].via.array;
+        m_tabline_tabs.reserve(tabs_arr.size);
+        for (size_t i = 0; i < tabs_arr.size; i++) {
+            if (tabs_arr.ptr[i].type != msgpack::type::MAP) {
+                continue;
+            }
+            msgpack::object_map& tab_map = tabs_arr.ptr[i].via.map;
+            TabInfo info;
+            for (size_t j = 0; j < tab_map.size; j++) {
+                if (tab_map.ptr[j].key.type != msgpack::type::STR) {
+                    continue;
+                }
+                std::string key = tab_map.ptr[j].key.as<std::string>();
+                if (key == "tab") {
+                    info.handle = static_cast<uint64_t>(
+                        _extract_handle(tab_map.ptr[j].val));
+                } else if (key == "name") {
+                    if (tab_map.ptr[j].val.type == msgpack::type::STR) {
+                        info.name = tab_map.ptr[j].val.as<std::string>();
+                    }
+                }
+            }
+            m_tabline_tabs.push_back(std::move(info));
+        }
+    }
+
+    // Parse curbuf and buffers (API level >= 7)
+    if (args.size >= 4) {
+        m_tabline_curbuf = static_cast<uint64_t>(_extract_handle(args.ptr[2]));
+
+        m_tabline_buffers.clear();
+        if (args.ptr[3].type == msgpack::type::ARRAY) {
+            msgpack::object_array& bufs_arr = args.ptr[3].via.array;
+            m_tabline_buffers.reserve(bufs_arr.size);
+            for (size_t i = 0; i < bufs_arr.size; i++) {
+                if (bufs_arr.ptr[i].type != msgpack::type::MAP) {
+                    continue;
+                }
+                msgpack::object_map& buf_map = bufs_arr.ptr[i].via.map;
+                TabInfo info;
+                for (size_t j = 0; j < buf_map.size; j++) {
+                    if (buf_map.ptr[j].key.type != msgpack::type::STR) {
+                        continue;
+                    }
+                    std::string key = buf_map.ptr[j].key.as<std::string>();
+                    if (key == "buffer") {
+                        info.handle = static_cast<uint64_t>(
+                            _extract_handle(buf_map.ptr[j].val));
+                    } else if (key == "name") {
+                        if (buf_map.ptr[j].val.type == msgpack::type::STR) {
+                            info.name = buf_map.ptr[j].val.as<std::string>();
+                        }
+                    }
+                }
+                m_tabline_buffers.push_back(std::move(info));
+            }
+        }
+    } else {
+        m_tabline_curbuf = 0;
+        m_tabline_buffers.clear();
+    }
+
+    // Show tabline only when there are multiple tabs
+    m_tabline_visible = m_tabline_tabs.size() > 1;
+
+    LOG_TRACE("tabline_update: curtab={}, tabs={}, curbuf={}, buffers={}",
+              m_tabline_curtab, m_tabline_tabs.size(), m_tabline_curbuf,
+              m_tabline_buffers.size());
+}
+
 // --- Cmdline event handlers (ext_cmdline) ---
 
 void NvimWidget::_cmdline_show(msgpack::object_array& args) {
@@ -3539,6 +3648,122 @@ uint32_t NvimWidget::_overlay_rows() const {
     return std::max(1u, rows);
 }
 
+uint32_t NvimWidget::_tabline_rows() const {
+    return m_tabline_visible ? 1u : 0u;
+}
+
+void NvimWidget::_render_tabline() {
+    if (m_tabline_tabs.empty()) {
+        return;
+    }
+
+    // Match the dock tab bar styling for visual consistency.
+    ImGui::PushStyleColor(ImGuiCol_Tab, ImGui::GetStyleColorVec4(ImGuiCol_Tab));
+    ImGui::PushStyleColor(ImGuiCol_TabActive,
+                          ImGui::GetStyleColorVec4(ImGuiCol_TabActive));
+    ImGui::PushStyleColor(ImGuiCol_TabHovered,
+                          ImGui::GetStyleColorVec4(ImGuiCol_TabHovered));
+    if (!ImGui::IsWindowFocused()) {
+        ImGui::PushStyleColor(ImGuiCol_Tab, ImGui::GetStyleColorVec4(
+                                                ImGuiCol_TabUnfocusedActive));
+        ImGui::PushStyleColor(
+            ImGuiCol_TabActive,
+            ImGui::GetStyleColorVec4(ImGuiCol_TabUnfocusedActive));
+    }
+
+    ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_Reorderable |
+                                     ImGuiTabBarFlags_AutoSelectNewTabs |
+                                     ImGuiTabBarFlags_FittingPolicyScroll;
+
+    if (ImGui::BeginTabBar("##NvimTabline", tab_bar_flags)) {
+        uint64_t gui_selected_this_frame = 0;
+
+        for (const auto& tab : m_tabline_tabs) {
+            // No SetSelected — ImGui remembers the selected tab across
+            // frames naturally.  We detect user clicks by comparing the
+            // current selection against the previous frame's selection.
+            ImGuiTabItemFlags tab_flags = ImGuiTabItemFlags_NoCloseButton;
+
+            // When Neovim changed the tabpage externally (e.g. :tabnext),
+            // force-sync ImGui's selection on the next frame.
+            if (m_tabline_needs_sync && tab.handle == m_tabline_curtab) {
+                tab_flags |= ImGuiTabItemFlags_SetSelected;
+            }
+
+            bool open = true;
+            bool is_selected =
+                ImGui::BeginTabItem(tab.name.c_str(), &open, tab_flags);
+            if (is_selected) {
+                gui_selected_this_frame = tab.handle;
+                ImGui::EndTabItem();
+            }
+        }
+
+        // BeginTabItem returns true every frame for the selected tab
+        // (whether set via SetSelected or via a user click).  Detect
+        // actual user clicks by comparing against last frame's
+        // selection.
+        bool gui_changed =
+            (gui_selected_this_frame != 0) &&
+            (gui_selected_this_frame != m_tabline_last_gui_selected);
+        bool differs_from_nvim = (gui_selected_this_frame != m_tabline_curtab);
+
+        if (gui_changed && differs_from_nvim) {
+            _switch_to_tab(gui_selected_this_frame);
+        }
+
+        // Detect external tabpage changes (e.g. :tabnext typed in Neovim).
+        // If Neovim's curtab changed but the GUI selection didn't (no user
+        // click), schedule a one-shot SetSelected for the next frame.
+        bool nvim_changed = (m_tabline_curtab != 0) &&
+                            (m_tabline_last_gui_selected != 0) &&
+                            (m_tabline_curtab != m_tabline_last_gui_selected);
+        if (nvim_changed && !gui_changed) {
+            m_tabline_needs_sync = true;
+        } else if (gui_selected_this_frame == m_tabline_curtab) {
+            m_tabline_needs_sync = false;
+        }
+
+        m_tabline_last_gui_selected = gui_selected_this_frame;
+
+        ImGui::EndTabBar();
+    }
+
+    if (!ImGui::IsWindowFocused()) {
+        ImGui::PopStyleColor(2); // TabUnfocusedActive pair
+    }
+    ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
+
+    // BeginTabBar already reserves its vertical space via ItemSize() and
+    // advances the cursor — no manual Dummy() or SetCursorScreenPos() needed.
+}
+
+void NvimWidget::_switch_to_tab(uint64_t tabpage_handle) {
+    LOG_DEBUG("Switching to tabpage {}", tabpage_handle);
+    auto req =
+        start_nvim_request("nvim_set_current_tabpage", 1, nullptr, nullptr);
+    if (req) {
+        // Tabpage handles are sent as EXT(Tabpage). Use the ext packing
+        // with type code 2 (kObjectTypeTabpage).
+        // Send as a 1-byte payload containing the handle as a fixint.
+        char payload[8];
+        size_t payload_len = 0;
+        if (tabpage_handle <= 0x7f) {
+            // fixint fits in a single byte for fixext1
+            payload[0] = static_cast<char>(tabpage_handle);
+            payload_len = 1;
+        } else {
+            // Encode as a msgpack uint for ext8+
+            msgpack::sbuffer sbuf;
+            msgpack::pack(sbuf, tabpage_handle);
+            payload_len = sbuf.size();
+            memcpy(payload, sbuf.data(), payload_len);
+        }
+        req->arg_ext(payload_len, 2); // 2 = kObjectTypeTabpage
+        req->arg_ext_body(payload, payload_len);
+    }
+}
+
 void NvimWidget::_render_cmdline_block(ImDrawList* draw_list, const ImVec2& pos,
                                        float char_width, float line_height) {
     auto it = m_grids.find(m_current_grid);
@@ -3880,16 +4105,23 @@ void NvimWidget::_handle_nvim_resize() {
     // Neovim gets a smaller grid so it places the statusline above the
     // reserved area, preventing overlap with the overlays.
     uint32_t overlay = _overlay_rows();
-    uint32_t grid_rows =
-        (total_rows > overlay) ? total_rows - overlay : total_rows;
+    uint32_t top_overlay = _tabline_rows(); // Tabline at top (ext_tabline)
+    uint32_t grid_rows = total_rows;
+    if (total_rows > overlay + top_overlay) {
+        grid_rows = total_rows - overlay - top_overlay;
+    }
+    // display_rows counts only rows from the grid origin (below the
+    // tabline) downward.  Bottom overlays use display_rows as their
+    // reference frame, so it must exclude the tabline.
+    uint32_t display_rows = total_rows - top_overlay;
 
     if (new_cols != m_state.col || grid_rows != m_state.row) {
         LOG_TRACE("Resizing nvim widget: {}x{} (display {}x{})", new_cols,
-                  grid_rows, new_cols, total_rows);
-        m_display_rows = total_rows;
+                  grid_rows, new_cols, display_rows);
+        m_display_rows = display_rows;
         resize(new_cols, grid_rows);
-    } else if (total_rows != m_display_rows) {
-        m_display_rows = total_rows;
+    } else if (display_rows != m_display_rows) {
+        m_display_rows = display_rows;
     }
 }
 

@@ -198,6 +198,14 @@ class NvimWidget : public TextWidget,
     // messages).
     uint32_t _overlay_rows() const;
 
+    // Total rows currently needed by the top tabline (ext_tabline).
+    uint32_t _tabline_rows() const;
+
+    /* Tabline event handlers (ext_tabline) */
+    void _redraw_tabline_update(msgpack::object_array& args);
+    void _render_tabline();
+    void _switch_to_tab(uint64_t tabpage_handle);
+
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
     static void _on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
@@ -457,6 +465,23 @@ class NvimWidget : public TextWidget,
     // Multigrid protocol state
     bool m_multigrid_enabled{false};
     std::unordered_map<std::string, int> m_hl_group_map;
+
+    // Tabline state (ext_tabline)
+    struct TabInfo {
+        uint64_t handle{0};
+        std::string name;
+    };
+    std::vector<TabInfo> m_tabline_tabs;
+    uint64_t m_tabline_curtab{0};
+    std::vector<TabInfo> m_tabline_buffers; // Listed buffers (API level >= 7)
+    uint64_t m_tabline_curbuf{0};
+    bool m_tabline_visible{false};
+    uint64_t m_tabline_last_gui_selected{0}; // Tracks which tab ImGui had
+                                             // selected last frame (detects
+                                             // clicks vs static selection).
+    bool m_tabline_needs_sync{false};        // Set when Neovim changed tabpage
+                                      // externally (e.g. :tabnext) so the
+                                      // next frame syncs ImGui's selection.
 
     uv_process_t m_nvim_proc;
     uv_pipe_t m_in_pipe;

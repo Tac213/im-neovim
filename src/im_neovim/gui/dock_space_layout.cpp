@@ -5,10 +5,13 @@
 
 namespace {
 
-/// Flags applied to the nvim dock node: no close button, no undocking.
+/// Flags applied to the nvim dock node: no close button, no undocking,
+/// no tab bar. The tabline is rendered inside the nvim widget via ImGui's
+/// BeginTabBar (ext_tabline UI extension).
 constexpr ImGuiDockNodeFlags g_nvim_lock_flags =
     static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_NoCloseButton) |
-    static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_NoUndocking);
+    static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_NoUndocking) |
+    static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_NoTabBar);
 
 } // namespace
 
