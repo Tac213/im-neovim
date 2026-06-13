@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <imgui.h>
 #include <string>
+#include <uv.h>
 #include <vector>
 
 namespace ImNeovim {
@@ -52,6 +53,11 @@ class FileTreeWidget {
     void _stop_watching();
     void _handle_file_system_changes();
 
+    // libuv callbacks (static — cast handle->data back to this)
+    static void _on_fs_event(uv_fs_event_t* handle, const char* filename,
+                             int events, int status);
+    static void _on_fs_event_close(uv_handle_t* handle);
+
     // Rendering helpers
     void _render_entry(DirectoryEntry& entry, int depth, bool is_root = false);
     void _render_directory_node(DirectoryEntry& entry, int depth,
@@ -66,8 +72,8 @@ class FileTreeWidget {
     std::vector<DirectoryEntry> m_root_entries;
     bool m_needs_refresh;
 
-    // File system watcher (platform-specific handle)
-    void* m_watch_handle;
+    // File system watchers — one uv_fs_event_t per workspace root.
+    std::vector<uv_fs_event_t*> m_watchers;
 
     // Window state
     std::string m_window_title{"File Tree"};

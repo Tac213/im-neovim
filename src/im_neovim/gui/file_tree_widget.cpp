@@ -8,14 +8,16 @@
 namespace ImNeovim {
 using ImApp::path_to_string;
 
-FileTreeWidget::FileTreeWidget()
-    : m_needs_refresh(true), m_watch_handle(nullptr) {
+FileTreeWidget::FileTreeWidget() : m_needs_refresh(true) {
     _rebuild_root_entries();
 
     // React to workspace changes — defer rebuild to avoid
     // iterator invalidation during rendering.
     m_workspace_conn = g_workspace.on_changed.connect(
         std::bind_front(&FileTreeWidget::_on_workspace_changed, this));
+
+    // Start watching workspace root(s) for external changes.
+    _start_watching();
 }
 
 FileTreeWidget::~FileTreeWidget() {
@@ -95,14 +97,68 @@ void FileTreeWidget::
     }
 }
 
-void FileTreeWidget::_start_watching() { m_watch_handle = nullptr; }
-
-void FileTreeWidget::_stop_watching() { m_watch_handle = nullptr; }
-
-void FileTreeWidget::_handle_file_system_changes() {
-    if (m_needs_refresh) {
-        _rebuild_root_entries();
+void FileTreeWidget::_start_watching() {
+    if (globals::g_uv_loop == nullptr) {
+        return;
     }
+
+    for (const auto& folder : g_workspace.folders()) {
+        auto* handle = new uv_fs_event_t;
+        int r = uv_fs_event_init(globals::g_uv_loop, handle);
+        if (r < 0) {
+            LOG_WARN("FileTreeWidget: uv_fs_event_init failed for '{}': {}",
+                     path_to_string(folder), uv_strerror(r));
+            delete handle;
+            continue;
+        }
+
+        handle->data = this;
+        r = uv_fs_event_start(handle, &FileTreeWidget::_on_fs_event,
+                              path_to_string(folder).c_str(), 0);
+        if (r < 0) {
+            LOG_WARN("FileTreeWidget: uv_fs_event_start failed for '{}': {}",
+                     path_to_string(folder), uv_strerror(r));
+            uv_close(reinterpret_cast<uv_handle_t*>(handle),
+                     &FileTreeWidget::_on_fs_event_close);
+            continue;
+        }
+
+        m_watchers.push_back(handle);
+        LOG_DEBUG("FileTreeWidget: watching '{}'", path_to_string(folder));
+    }
+}
+
+void FileTreeWidget::_stop_watching() {
+    for (auto* handle : m_watchers) {
+        uv_fs_event_stop(handle);
+        // Prevent stale callbacks from touching a destroyed FileTreeWidget.
+        handle->data = nullptr;
+        uv_close(reinterpret_cast<uv_handle_t*>(handle),
+                 &FileTreeWidget::_on_fs_event_close);
+    }
+    m_watchers.clear();
+}
+
+void FileTreeWidget::_on_fs_event(uv_fs_event_t* handle, const char* filename,
+                                  int events, int status) {
+    auto* self = static_cast<FileTreeWidget*>(handle->data);
+    // Guard: _stop_watching() sets data to nullptr before uv_close().
+    if (self == nullptr) {
+        return;
+    }
+
+    if (status < 0) {
+        LOG_WARN("FileTreeWidget: fs event error: {}", uv_strerror(status));
+        return;
+    }
+
+    LOG_DEBUG("FileTreeWidget: fs event '{}' (events={:#x})",
+              filename ? filename : "<root>", events);
+    self->m_needs_refresh = true;
+}
+
+void FileTreeWidget::_on_fs_event_close(uv_handle_t* handle) {
+    delete reinterpret_cast<uv_fs_event_t*>(handle);
 }
 
 void FileTreeWidget::_render_entry(DirectoryEntry& entry, int depth,
@@ -263,6 +319,17 @@ void FileTreeWidget::render() {
     ImGui::End();
 }
 
-void FileTreeWidget::_on_workspace_changed() { m_needs_refresh = true; }
+void FileTreeWidget::_handle_file_system_changes() {
+    if (m_needs_refresh) {
+        _rebuild_root_entries();
+    }
+}
+
+void FileTreeWidget::_on_workspace_changed() {
+    // Re-sync watchers with the new workspace folder list.
+    _stop_watching();
+    _start_watching();
+    m_needs_refresh = true;
+}
 
 } // namespace ImNeovim
