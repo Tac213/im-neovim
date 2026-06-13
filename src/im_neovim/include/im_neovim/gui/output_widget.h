@@ -4,6 +4,7 @@
 #include <im_app/output_capture.h>
 #include <imgui.h>
 #include <string>
+#include <vector>
 
 namespace ImNeovim {
 
@@ -65,6 +66,13 @@ class OutputWidget {
 
     // --- Auto-scroll ---
     bool m_auto_scroll{true};
+
+    // --- Logger filter (combo box) ---
+    std::vector<std::string> m_logger_names;
+    int m_selected_logger_index{0};
+    bool m_logger_names_populated{false};
+
+    void _populate_logger_names();
 };
 
 } // namespace ImNeovim

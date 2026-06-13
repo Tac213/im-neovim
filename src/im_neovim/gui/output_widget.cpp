@@ -49,7 +49,76 @@ void OutputWidget::render() {
 // Toolbar: filter input | Clear button | Auto-scroll checkbox
 // ---------------------------------------------------------------------------
 
+void OutputWidget::_populate_logger_names() {
+    if (m_logger_names_populated) {
+        return;
+    }
+
+    spdlog::apply_all([&](std::shared_ptr<spdlog::logger> logger) {
+        const auto& name = logger->name();
+        if (!name.empty()) {
+            m_logger_names.push_back(name);
+        }
+    });
+    std::sort(m_logger_names.begin(), m_logger_names.end());
+
+    // Default to "ImNeoVim" if present.
+    auto it =
+        std::find(m_logger_names.begin(), m_logger_names.end(), "ImNeoVim");
+    if (it != m_logger_names.end()) {
+        m_selected_logger_index =
+            static_cast<int>(std::distance(m_logger_names.begin(), it));
+    }
+
+    m_logger_names_populated = true;
+}
+
 void OutputWidget::_render_toolbar() {
+    _populate_logger_names();
+
+    // -- Logger combo --
+    float combo_width = 80.0f;
+    if (!m_logger_names.empty()) {
+        for (const auto& name : m_logger_names) {
+            float w = ImGui::CalcTextSize(name.c_str()).x;
+            if (w > combo_width) {
+                combo_width = w;
+            }
+        }
+        combo_width += ImGui::GetStyle().FramePadding.x * 2.0f + 30.0f;
+    }
+
+    ImGui::SetNextItemWidth(combo_width);
+    if (m_logger_names.empty()) {
+        ImGui::BeginDisabled();
+        ImGui::Button("No loggers", ImVec2(combo_width, 0));
+        ImGui::EndDisabled();
+    } else {
+        if (m_selected_logger_index < 0 ||
+            m_selected_logger_index >=
+                static_cast<int>(m_logger_names.size())) {
+            m_selected_logger_index = 0;
+        }
+        const char* preview =
+            m_logger_names[static_cast<size_t>(m_selected_logger_index)]
+                .c_str();
+        if (ImGui::BeginCombo("##logger_filter", preview)) {
+            for (size_t i = 0; i < m_logger_names.size(); ++i) {
+                bool is_selected =
+                    (static_cast<int>(i) == m_selected_logger_index);
+                if (ImGui::Selectable(m_logger_names[i].c_str(), is_selected)) {
+                    m_selected_logger_index = static_cast<int>(i);
+                }
+                if (is_selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    ImGui::SameLine();
+
     // -- Filter input --
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x -
                             ImGui::CalcTextSize("Clear").x -
@@ -65,6 +134,7 @@ void OutputWidget::_render_toolbar() {
     if (ImGui::Button("Clear")) {
         ImApp::OutputCapture::instance().clear();
         m_entries.clear();
+        m_selected_logger_index = 0;
     }
 
     ImGui::SameLine();
@@ -106,6 +176,15 @@ void OutputWidget::_render_log_entries() {
     std::vector<const ImApp::LogEntry*> visible_entries;
     visible_entries.reserve(m_entries.size());
     for (const auto& entry : m_entries) {
+        // Logger filter (combo box)
+        if (!m_logger_names.empty() && m_selected_logger_index >= 0 &&
+            m_selected_logger_index < static_cast<int>(m_logger_names.size())) {
+            if (entry.logger_name !=
+                m_logger_names[static_cast<size_t>(m_selected_logger_index)]) {
+                continue;
+            }
+        }
+
         if (has_filter) {
             std::string lower_msg = entry.message;
             std::transform(lower_msg.begin(), lower_msg.end(),
