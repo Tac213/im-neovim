@@ -7,6 +7,8 @@
 #include <im_app/file_system.h>
 #include <im_app/font_manager.h>
 #include <imgui_internal.h>
+#include <unordered_map>
+
 
 namespace {
 
@@ -58,6 +60,17 @@ namespace {
         }
     }
     return 0; // Fallback: unrecognized type
+}
+
+/// Extract the basename (filename) from a path-like string.
+/// Returns the original string unchanged if it doesn't contain
+/// path separators (handles both forward and backward slashes).
+[[nodiscard]] inline std::string _basename(const std::string& path) {
+    auto pos = path.find_last_of("/\\");
+    if (pos == std::string::npos) {
+        return path; // Not a file path — return unchanged
+    }
+    return path.substr(pos + 1);
 }
 
 } // namespace
@@ -2840,6 +2853,29 @@ void NvimWidget::_redraw_tabline_update(msgpack::object_array& args) {
     } else {
         m_tabline_curbuf = 0;
         m_tabline_buffers.clear();
+    }
+
+    // Transform tab names: show basename by default, full path only
+    // when two or more tabs share the same basename.
+    if (m_tabline_tabs.size() > 1) {
+        // Count basename occurrences (only for file-path names).
+        std::unordered_map<std::string, int> basename_counts;
+        for (const auto& tab : m_tabline_tabs) {
+            std::string bn = _basename(tab.name);
+            if (bn != tab.name) { // Looks like a file path
+                basename_counts[bn]++;
+            }
+        }
+        // Apply: unique basename → use basename; duplicate → keep full path.
+        for (auto& tab : m_tabline_tabs) {
+            std::string bn = _basename(tab.name);
+            if (bn != tab.name) { // Is a file path
+                auto it = basename_counts.find(bn);
+                if (it != basename_counts.end() && it->second == 1) {
+                    tab.name = std::move(bn);
+                }
+            }
+        }
     }
 
     // Show tabline only when there are multiple tabs
