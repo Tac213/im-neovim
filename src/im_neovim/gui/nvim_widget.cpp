@@ -2835,6 +2835,17 @@ void NvimWidget::_redraw_tabline_update(msgpack::object_array& args) {
     // Show tabline only when there are multiple tabs
     m_tabline_visible = m_tabline_tabs.size() > 1;
 
+    // When the tabline is visible and the last-selected tracker is
+    // uninitialized (first render after startup, or after a tab close
+    // reset it to 0), seed it to match Neovim's current tab so the
+    // next render doesn't misdetect ImGui's default selection as a
+    // user click.  Also enable sync so ImGui's selection is forced
+    // to the correct tab via SetSelected.
+    if (m_tabline_visible && m_tabline_last_gui_selected == 0) {
+        m_tabline_last_gui_selected = m_tabline_curtab;
+        m_tabline_needs_sync = true;
+    }
+
     LOG_TRACE("tabline_update: curtab={}, tabs={}, curbuf={}, buffers={}",
               m_tabline_curtab, m_tabline_tabs.size(), m_tabline_curbuf,
               m_tabline_buffers.size());
@@ -3676,9 +3687,8 @@ void NvimWidget::_render_tabline() {
             ImGui::GetStyleColorVec4(ImGuiCol_TabUnfocusedActive));
     }
 
-    ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_Reorderable |
-                                     ImGuiTabBarFlags_AutoSelectNewTabs |
-                                     ImGuiTabBarFlags_FittingPolicyScroll;
+    ImGuiTabBarFlags tab_bar_flags =
+        ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll;
 
     if (ImGui::BeginTabBar("##NvimTabline", tab_bar_flags)) {
         uint64_t gui_selected_this_frame = 0;
@@ -3746,7 +3756,11 @@ void NvimWidget::_render_tabline() {
             (gui_selected_this_frame != m_tabline_last_gui_selected);
         bool differs_from_nvim = (gui_selected_this_frame != m_tabline_curtab);
 
-        if (gui_changed && differs_from_nvim) {
+        // When a sync is pending (Neovim changed tabs externally),
+        // ImGui's selection is unreliable — AutoSelectNewTabs or tab
+        // list rebuilds may have selected the wrong tab.  Don't issue
+        // a switch based on it; let SetSelected retry next frame.
+        if (gui_changed && differs_from_nvim && !m_tabline_needs_sync) {
             _switch_to_tab(gui_selected_this_frame);
         }
 
@@ -3754,7 +3768,6 @@ void NvimWidget::_render_tabline() {
         // If Neovim's curtab changed but the GUI selection didn't (no user
         // click), schedule a one-shot SetSelected for the next frame.
         bool nvim_changed = (m_tabline_curtab != 0) &&
-                            (m_tabline_last_gui_selected != 0) &&
                             (m_tabline_curtab != m_tabline_last_gui_selected);
         if (nvim_changed && !gui_changed) {
             m_tabline_needs_sync = true;
