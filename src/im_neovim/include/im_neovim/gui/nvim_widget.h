@@ -490,6 +490,10 @@ class NvimWidget : public TextWidget,
                                       // externally (e.g. :tabnext) so the
                                       // next frame syncs ImGui's selection.
 
+    // Last canonical path opened via open_file(). Used to skip duplicate
+    // file-open requests in single-tab view (tabline hidden).
+    std::string m_last_opened_path;
+
     uv_process_t m_nvim_proc;
     uv_pipe_t m_in_pipe;
     uv_pipe_t m_out_pipe;

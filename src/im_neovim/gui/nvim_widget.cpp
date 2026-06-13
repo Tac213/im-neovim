@@ -9,7 +9,6 @@
 #include <imgui_internal.h>
 #include <unordered_map>
 
-
 namespace {
 
 // djb2 compile-time string hash for O(1) switch-based dispatch.
@@ -71,6 +70,18 @@ namespace {
         return path; // Not a file path — return unchanged
     }
     return path.substr(pos + 1);
+}
+
+/// Normalize a file path to canonical form for reliable comparison.
+/// Returns an empty string on error (e.g. file doesn't exist yet).
+[[nodiscard]] inline std::string
+_normalize_file_path(const std::filesystem::path& path) {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(path, ec);
+    if (ec) {
+        return {};
+    }
+    return ImApp::path_to_string(canonical);
 }
 
 } // namespace
@@ -230,11 +241,25 @@ NvimWidget::~NvimWidget() {
 }
 
 void NvimWidget::open_file(const std::filesystem::path& path) {
-    // Open with :edit when no buffer is active, :tabedit otherwise.
-    // tabedit opens in a new tab, leaving any modified buffer untouched
-    // in its existing tab — no save-dialog guard is needed here.
-    std::string_view cmd = m_has_active_buffer ? "tabedit " : "edit ";
+    std::string normalized = _normalize_file_path(path);
+
+    // Single-tab view: if this exact file is already the current buffer,
+    // skip the open request (no-op).
+    if (!m_tabline_visible && m_has_active_buffer && !normalized.empty() &&
+        normalized == m_last_opened_path) {
+        return;
+    }
+
+    // Use :drop for the first file (opens in current window; switches to
+    // an existing hidden buffer if the file is already loaded).
+    // Use :tab drop for subsequent files — Neovim jumps to the existing
+    // tab if the file is already open, or creates a new tab.
+    std::string_view cmd = m_has_active_buffer ? "tab drop " : "drop ";
     _do_open_file(path, false, cmd);
+
+    if (!normalized.empty()) {
+        m_last_opened_path = std::move(normalized);
+    }
 }
 
 void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force,
@@ -261,11 +286,16 @@ void NvimWidget::_do_open_file(const std::filesystem::path& path, bool force,
     // Send the command to nvim via nvim_command
     auto request = start_nvim_request(
         "nvim_command", 1,
-        [this, filename](msgpack::object&) {
+        [this, filename, path](msgpack::object&) {
             m_window_title = filename;
             m_has_active_buffer = true;
             m_buffer_modified = false;
             m_needs_modified_check = true;
+            // Update last-opened path for single-tab dedup.
+            std::string npath = _normalize_file_path(path);
+            if (!npath.empty()) {
+                m_last_opened_path = std::move(npath);
+            }
             LOG_DEBUG("File opened successfully: {}", filename);
         },
         [](int32_t error_code, const std::string& error_msg) {
@@ -1225,16 +1255,10 @@ void NvimWidget::_process_startup_files() {
 
     LOG_INFO("Processing {} startup file(s)", files.size());
 
-    for (size_t i = 0; i < files.size(); ++i) {
-        // First file with :edit when no buffer is active,
-        // :tabedit otherwise.
-        std::string_view cmd;
-        if (!m_has_active_buffer && i == 0) {
-            cmd = "edit ";
-        } else {
-            cmd = "tabedit ";
-        }
-        _do_open_file(files[i], false, cmd);
+    for (const auto& file : files) {
+        // Delegates to open_file() which handles :drop/:tab drop and
+        // deduplicates already-open files in single-tab view.
+        open_file(file);
     }
 }
 
