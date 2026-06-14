@@ -1304,6 +1304,7 @@ void NvimWidget::_set_nvim_attached(bool attached) {
     if (attached) {
         _notify_nvim_resize(m_state.col, m_state.row);
         _process_startup_files();
+        on_attached.emit();
     }
 }
 

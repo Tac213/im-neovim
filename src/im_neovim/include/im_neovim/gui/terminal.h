@@ -61,7 +61,8 @@ class Terminal : public TextWidget {
     Terminal();
     ~Terminal();
 
-    void render();
+    virtual void render() override;
+    ImGuiWindowFlags get_additional_window_flags() const override;
     void resize(int cols, int rows);
     const std::string& window_title() const { return m_window_title; }
     void set_window_title(const std::string& title) { m_window_title = title; }

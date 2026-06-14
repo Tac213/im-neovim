@@ -75,6 +75,14 @@ Terminal::~Terminal() {
     m_pty.reset();
 }
 
+ImGuiWindowFlags Terminal::get_additional_window_flags() const {
+    // Prevent the terminal from stealing keyboard focus from nvim when
+    // it first appears (e.g. at launch with workspace folders).  The
+    // View > Terminal toggle handler explicitly calls SetWindowFocus()
+    // which overrides this flag on intentional activation.
+    return ImGuiWindowFlags_NoFocusOnAppearing;
+}
+
 void Terminal::render() {
     if (!m_is_visible) {
         return;

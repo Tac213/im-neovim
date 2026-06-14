@@ -185,13 +185,24 @@ void LayerMainWindow::on_attach() {
     if (m_nvim) {
         m_nvim_exit_connection = m_nvim->on_exit_requested.connect(
             std::bind_front(&LayerMainWindow::_on_nvim_exit_signal, this));
+
+        // Request focus for nvim once it finishes attaching (nvim_ui_attach
+        // completes asynchronously after the first render).
+        m_nvim_attached_connection = m_nvim->on_attached.connect(
+            std::bind_front(&LayerMainWindow::_on_nvim_attached, this));
     }
 }
 
 void LayerMainWindow::on_detach() {
-    if (m_nvim && m_nvim_exit_connection != 0) {
-        m_nvim->on_exit_requested.disconnect(m_nvim_exit_connection);
-        m_nvim_exit_connection = 0;
+    if (m_nvim) {
+        if (m_nvim_exit_connection != 0) {
+            m_nvim->on_exit_requested.disconnect(m_nvim_exit_connection);
+            m_nvim_exit_connection = 0;
+        }
+        if (m_nvim_attached_connection != 0) {
+            m_nvim->on_attached.disconnect(m_nvim_attached_connection);
+            m_nvim_attached_connection = 0;
+        }
     }
 }
 
@@ -288,6 +299,10 @@ void LayerMainWindow::on_imgui_render() {
     if (m_focus_output_next_frame) {
         ImGui::SetWindowFocus(m_output_widget->im_window_name().c_str());
         m_focus_output_next_frame = false;
+    }
+    if (m_focus_nvim_next_frame) {
+        ImGui::SetWindowFocus(m_nvim->im_window_name().c_str());
+        m_focus_nvim_next_frame = false;
     }
 
     // Render exit confirmation modal when the user tries to close the app
@@ -691,5 +706,7 @@ void LayerMainWindow::_on_nvim_exit_signal(int exit_code) {
     // Propagate exit_code to Application if needed in the future.
     IM_APP.exit();
 }
+
+void LayerMainWindow::_on_nvim_attached() { m_focus_nvim_next_frame = true; }
 
 } // namespace ImNeovim

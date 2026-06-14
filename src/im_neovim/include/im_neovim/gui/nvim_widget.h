@@ -79,6 +79,10 @@ class NvimWidget : public TextWidget,
         std::function<void(msgpack::object&)>&& on_result,
         std::function<void(int32_t, const std::string&)>&& on_error);
 
+    /// Emitted when nvim has attached (nvim_ui_attach succeeded).
+    /// LayerMainWindow uses this to focus the nvim widget after launch.
+    ImNeovim::Signal<> on_attached;
+
     /// Emitted when the application should exit. The int argument is the
     /// exit code from error_exit (0 = detach, >0 = intentional exit, 1 =
     /// crash). LayerMainWindow connects to this Signal.

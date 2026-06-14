@@ -58,9 +58,11 @@ class LayerMainWindow : public ImApp::Layer {
     // has been rendered so the ImGui window exists.
     bool m_focus_terminal_next_frame{false};
     bool m_focus_output_next_frame{false};
+    bool m_focus_nvim_next_frame{false};
 
-    // Connection ID for NvimWidget crash/exit signal.
+    // Connection IDs for NvimWidget signals.
     uint64_t m_nvim_exit_connection{0};
+    uint64_t m_nvim_attached_connection{0};
 
     void _show_exit_modal();
     void _render_exit_modal();
@@ -110,5 +112,9 @@ class LayerMainWindow : public ImApp::Layer {
 
     /// NvimWidget crash/exit signal handler.
     void _on_nvim_exit_signal(int exit_code);
+
+    /// NvimWidget attached signal handler — requests focus for nvim
+    /// once nvim_ui_attach completes asynchronously.
+    void _on_nvim_attached();
 };
 } // namespace ImNeovim
