@@ -574,7 +574,7 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 set(CPACK_PACKAGE_VENDOR "ImNeovim Contributors")
-set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/ImNeovim/ImNeovim")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Tac213/im-neovim")
 
 # -- macOS: produce a .dmg disk image via the DragNDrop generator --
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
