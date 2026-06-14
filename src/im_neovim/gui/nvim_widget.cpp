@@ -3937,12 +3937,10 @@ void NvimWidget::_render_tabline() {
         uint64_t tab_to_close = 0; // Set when user clicks a close button
 
         for (const auto& tab : m_tabline_tabs) {
-            // Show a close button only on the active tab; hide it on
-            // all others (matching common tab-bar UX patterns).
+            // Never set NoCloseButton — ImGui reserves blank space
+            // for the close button on every tab (stable widths),
+            // and reveals the button (circle + '×') on hover.
             ImGuiTabItemFlags tab_flags = ImGuiTabItemFlags_None;
-            if (tab.handle != m_tabline_curtab) {
-                tab_flags |= ImGuiTabItemFlags_NoCloseButton;
-            }
 
             // When Neovim changed the tabpage externally (e.g. :tabnext),
             // force-sync ImGui's selection on the next frame.
@@ -3972,9 +3970,10 @@ void NvimWidget::_render_tabline() {
         }
 
         // --- Close-button handling ---
-        // The close button only appears on the active tab, which is
-        // guaranteed to be Neovim's current tabpage.  We can send
-        // :tabclose directly without switching first.
+        // Close buttons are always visible (ImGui reserves space on
+        // every tab).  For the active tab we send :tabclose directly;
+        // for inactive tabs we switch first via
+        // _switch_and_close_tab_discard().
         if (tab_to_close != 0 && m_tabline_tabs.size() > 1) {
             // Look up whether the closing tab is modified.
             bool closing_modified = false;
@@ -3999,7 +3998,25 @@ void NvimWidget::_render_tabline() {
                 // Don't return early — let the modal render this frame.
                 // Fall through to normal selection logic so the tab
                 // stays selected while the dialog is shown.
+            } else if (tab_to_close != m_tabline_curtab) {
+                // Non-active, unmodified tab: switch to it first,
+                // then close.  Reuses the same switch+close helper
+                // that the save dialog's "Don't Save" path uses.
+                LOG_DEBUG("tabline close (non-active): tab={}", tab_to_close);
+                m_pending_tab_close_handle = tab_to_close;
+                _switch_and_close_tab_discard();
+                // Let Neovim's next tabline_update notification drive
+                // the UI state — skip normal selection logic.
+                m_tabline_last_gui_selected = 0;
+                ImGui::EndTabBar();
+                if (!window_focused) {
+                    ImGui::PopStyleColor(
+                        2); // TabDimmed, TabDimmedSelected override
+                }
+                ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
+                return;
             } else {
+                // Active, unmodified tab: send :tabclose directly.
                 LOG_DEBUG("tabline close: tab={}", tab_to_close);
                 auto req =
                     start_nvim_request("nvim_command", 1, nullptr, nullptr);
