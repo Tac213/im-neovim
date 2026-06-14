@@ -3910,13 +3910,18 @@ void NvimWidget::_render_tabline() {
         return;
     }
 
+    // Capture focus state once so push/pop decisions stay consistent
+    // within the frame — avoids a stack imbalance if the value were to
+    // change between PushStyleColor and PopStyleColor.
+    const bool window_focused = ImGui::IsWindowFocused();
+
     // Match the dock tab bar styling for visual consistency.
     ImGui::PushStyleColor(ImGuiCol_Tab, ImGui::GetStyleColorVec4(ImGuiCol_Tab));
     ImGui::PushStyleColor(ImGuiCol_TabActive,
                           ImGui::GetStyleColorVec4(ImGuiCol_TabSelected));
     ImGui::PushStyleColor(ImGuiCol_TabHovered,
                           ImGui::GetStyleColorVec4(ImGuiCol_TabHovered));
-    if (!ImGui::IsWindowFocused()) {
+    if (!window_focused) {
         ImGui::PushStyleColor(ImGuiCol_Tab,
                               ImGui::GetStyleColorVec4(ImGuiCol_TabDimmed));
         ImGui::PushStyleColor(
@@ -4007,7 +4012,7 @@ void NvimWidget::_render_tabline() {
                 // UI state — skip normal selection logic for this frame.
                 m_tabline_last_gui_selected = 0;
                 ImGui::EndTabBar();
-                if (!ImGui::IsWindowFocused()) {
+                if (!window_focused) {
                     ImGui::PopStyleColor(
                         2); // TabDimmed, TabDimmedSelected override
                 }
@@ -4053,7 +4058,7 @@ void NvimWidget::_render_tabline() {
         ImGui::EndTabBar();
     }
 
-    if (!ImGui::IsWindowFocused()) {
+    if (!window_focused) {
         ImGui::PopStyleColor(2); // TabDimmed, TabDimmedSelected override
     }
     ImGui::PopStyleColor(3); // Tab, TabActive, TabHovered
