@@ -388,6 +388,22 @@ void NvimWidget::render() {
         _render_save_modal();
     }
 
+    // Render crash/exit dialog modal (outside window content check so it
+    // appears even after nvim has exited)
+    if (m_show_crash_dialog) {
+        _render_crash_dialog();
+    }
+
+    // Process pending restart (deferred from exit callback to allow
+    // libuv close callbacks to complete before pipe re-initialization).
+    if (m_pending_restart) {
+        if (m_restart_frame_delay > 0) {
+            --m_restart_frame_delay;
+        } else {
+            _try_restart_nvim();
+        }
+    }
+
     // Always call End() when Begin() was called, per ImGui requirements
     if (!m_is_embedded) {
         ImGui::End();
@@ -1019,30 +1035,50 @@ std::shared_ptr<NvimRequest> NvimWidget::start_nvim_request(
 }
 
 void NvimWidget::_spawn_nvim() {
-    auto exe_path = ImApp::FileSystem::executable_path();
-    auto exe_dir = exe_path.parent_path();
-#if defined(IM_APP_DARWIN)
-    // Bundled .app: Neovim is in Contents/Resources/nvim/
-    // Development (non-bundled): nvim/ sits next to the executable
-    auto nvim_exe_path =
-        exe_dir.parent_path() / "Resources" / "nvim" / "bin" / "nvim";
-    if (!std::filesystem::exists(nvim_exe_path)) {
-        nvim_exe_path = exe_dir / "nvim" / "bin" / "nvim";
-    }
-#else
-    auto nvim_exe_path = exe_dir / "nvim" / "bin" /
-#if defined(IM_APP_WIN32)
-                         "nvim.exe";
-#else
-                         "nvim";
-#endif
-#endif
-    m_nvim_exe = ImApp::path_to_string(nvim_exe_path);
+    // Build argument list: use crash restart argv if set, otherwise default
+    // to --embed with auto-located nvim binary.
+    std::vector<std::string> arg_strings;
+    std::vector<char*> args;
 
-    char* args[3];
-    args[0] = const_cast<char*>(m_nvim_exe.c_str());
-    args[1] = const_cast<char*>("--embed");
-    args[2] = nullptr;
+    if (!m_crash_restart_argv.empty()) {
+        // Crash restart path: use the stored progpath and argv.
+        arg_strings = m_crash_restart_argv;
+        // The stored argv[0] is the nvim binary path from
+        // _set_restart_on_crash_exit.  Prefer m_nvim_exe if it was
+        // overridden by _try_restart_nvim().
+        if (!m_nvim_exe.empty() && !arg_strings.empty() &&
+            m_nvim_exe != arg_strings[0]) {
+            arg_strings[0] = m_nvim_exe;
+        }
+        for (auto& s : arg_strings) {
+            args.push_back(s.data());
+        }
+        args.push_back(nullptr);
+    } else {
+        // Normal path: auto-locate the nvim binary next to the executable.
+        auto exe_path = ImApp::FileSystem::executable_path();
+        auto exe_dir = exe_path.parent_path();
+#if defined(IM_APP_DARWIN)
+        // Bundled .app: Neovim is in Contents/Resources/nvim/
+        // Development (non-bundled): nvim/ sits next to the executable
+        auto nvim_exe_path =
+            exe_dir.parent_path() / "Resources" / "nvim" / "bin" / "nvim";
+        if (!std::filesystem::exists(nvim_exe_path)) {
+            nvim_exe_path = exe_dir / "nvim" / "bin" / "nvim";
+        }
+#else
+        auto nvim_exe_path = exe_dir / "nvim" / "bin" /
+#if defined(IM_APP_WIN32)
+                             "nvim.exe";
+#else
+                             "nvim";
+#endif
+#endif
+        m_nvim_exe = ImApp::path_to_string(nvim_exe_path);
+        args.push_back(const_cast<char*>(m_nvim_exe.c_str()));
+        args.push_back(const_cast<char*>("--embed"));
+        args.push_back(nullptr);
+    }
 
     uv_pipe_init(globals::g_uv_loop, &m_in_pipe, 0);
     m_in_pipe.data = this;
@@ -1064,7 +1100,7 @@ void NvimWidget::_spawn_nvim() {
 
     uv_process_options_t options = {nullptr};
     options.file = m_nvim_exe.c_str();
-    options.args = args;
+    options.args = args.data();
     options.cwd = m_nvim_cwd.c_str();
     options.flags = UV_PROCESS_WINDOWS_HIDE; // no console for --embed nvim
     options.env = nullptr;
@@ -1498,6 +1534,12 @@ void NvimWidget::_handle_nvim_redraw(std::string_view operation,
         break;
     case _hash("tabline_update"):
         _redraw_tabline_update(args);
+        break;
+    case _hash("error_exit"):
+        _redraw_error_exit(args);
+        break;
+    case _hash("_set_restart_on_crash_exit"):
+        _redraw_set_restart_on_crash_exit(args);
         break;
     default:
         LOG_TRACE("Unhandled redraw operation: {}", operation);
@@ -4892,6 +4934,44 @@ void NvimWidget::_on_nvim_exit(uv_process_t* nvim_proc, int64_t exit_status,
     // (exit_cb_pending is still set). The destructor handles cleanup.
     self->m_nvim_exited = true;
     self->m_nvim_msgid.store(1);
+
+    // Determine the nature of the exit.
+    //
+    // error_exit received → intentional exit (:cquit N) or detach.
+    //   The signal may have already been emitted by _redraw_error_exit,
+    //   but emit here as well in case the redraw buffer wasn't flushed
+    //   before the process exited.
+    //
+    // No error_exit + clean exit (status 0, no signal) → normal :q/:q!.
+    //   Exit the application silently — no dialog needed.
+    //
+    // No error_exit + abnormal exit (non-zero status or killed by signal)
+    //   → crash.  Show dialog (with restart option if a restart hint was
+    //   previously received via _set_restart_on_crash_exit).
+    if (self->m_error_exit_received) {
+        // Intentional exit or detach.
+        self->on_exit_requested.emit(self->m_error_exit_status);
+    } else if (exit_status != 0 || term_signal != 0) {
+        // Crash — no error_exit received and the process died abnormally.
+        if (self->m_restart_on_crash_enabled &&
+            !self->m_crash_restart_progpath.empty()) {
+            self->m_crash_dialog_mode = CrashDialogMode::RestartOffer;
+            self->m_show_crash_dialog = true;
+            LOG_WARN("Neovim crashed (exit {}, signal {}). "
+                     "Restart hint available, showing dialog.",
+                     exit_status, term_signal);
+        } else {
+            self->m_crash_dialog_mode = CrashDialogMode::Exit;
+            self->m_show_crash_dialog = true;
+            LOG_ERROR("Neovim crashed (exit {}, signal {}). "
+                      "No restart hint available.",
+                      exit_status, term_signal);
+        }
+    } else {
+        // Normal exit (:q, :q!).  Close the application silently.
+        LOG_INFO("Neovim exited normally (status 0)");
+        self->on_exit_requested.emit(0);
+    }
 }
 
 void NvimWidget::_uv_alloc_cb(uv_handle_t* handle, size_t suggested,
@@ -5634,6 +5714,198 @@ void NvimWidget::_render_save_modal() {
 
         ImGui::EndPopup();
     }
+}
+
+// --- error_exit redraw handler ---
+
+void NvimWidget::_redraw_error_exit(msgpack::object_array& args) {
+    if (args.size < 1) {
+        LOG_WARN("error_exit: expected 1 argument, got {}", args.size);
+        return;
+    }
+    auto& status_obj = args.ptr[0];
+    int status = 0;
+    if (status_obj.type == msgpack::type::POSITIVE_INTEGER) {
+        status = static_cast<int>(status_obj.as<uint32_t>());
+    } else if (status_obj.type == msgpack::type::NEGATIVE_INTEGER) {
+        status = status_obj.as<int>();
+    } else {
+        LOG_WARN("error_exit: expected integer status, got type {}",
+                 static_cast<int>(status_obj.type));
+        return;
+    }
+
+    m_error_exit_received = true;
+    m_error_exit_status = status;
+    LOG_INFO("Received error_exit with status {}", status);
+
+    // status > 0: intentional exit (:cquit N)
+    // status == 0: detach
+    // In both cases, exit the application immediately (no dialog).
+    on_exit_requested.emit(status);
+}
+
+// --- _set_restart_on_crash_exit redraw handler ---
+
+void NvimWidget::_redraw_set_restart_on_crash_exit(
+    msgpack::object_array& args) {
+    if (args.size < 2) {
+        LOG_WARN("_set_restart_on_crash_exit: expected 2 arguments, got {}",
+                 args.size);
+        return;
+    }
+
+    // First argument: progpath (string)
+    if (args.ptr[0].type != msgpack::type::STR) {
+        LOG_WARN("_set_restart_on_crash_exit: expected string progpath");
+        return;
+    }
+    m_crash_restart_progpath = args.ptr[0].as<std::string>();
+
+    // Second argument: argv (array of strings)
+    if (args.ptr[1].type != msgpack::type::ARRAY) {
+        LOG_WARN("_set_restart_on_crash_exit: expected array argv");
+        return;
+    }
+    m_crash_restart_argv.clear();
+    auto& argv_arr = args.ptr[1].via.array;
+    for (size_t i = 0; i < argv_arr.size; i++) {
+        if (argv_arr.ptr[i].type == msgpack::type::STR) {
+            m_crash_restart_argv.push_back(argv_arr.ptr[i].as<std::string>());
+        }
+    }
+
+    m_restart_on_crash_enabled = true;
+    LOG_INFO("Crash restart hint set: {} with {} args",
+             m_crash_restart_progpath, m_crash_restart_argv.size());
+}
+
+// --- Crash/exit modal dialog ---
+
+void NvimWidget::_render_crash_dialog() {
+    // ImGui modal pattern: OpenPopup must be called every frame before
+    // BeginPopupModal
+    if (!ImGui::IsPopupOpen("##NeovimError")) {
+        ImGui::OpenPopup("##NeovimError");
+    }
+
+    // Center the modal on screen
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    bool open = true;
+    if (ImGui::BeginPopupModal("##NeovimError", &open,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (m_crash_dialog_mode == CrashDialogMode::RestartOffer) {
+            ImGui::Text("Neovim has exited unexpectedly.\n"
+                        "Would you like to restart it?");
+        } else {
+            ImGui::Text("Neovim has exited unexpectedly.\n"
+                        "Check the application logs for details.");
+        }
+        ImGui::Spacing();
+
+        float button_width = ImGui::GetFontSize() * 7.0f;
+
+        if (m_crash_dialog_mode == CrashDialogMode::RestartOffer) {
+            if (ImGui::Button("Restart", ImVec2(button_width, 0))) {
+                m_pending_restart = true;
+                m_restart_frame_delay = 3;
+                m_show_crash_dialog = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+        }
+
+        if (ImGui::Button("Exit", ImVec2(button_width, 0))) {
+            m_show_crash_dialog = false;
+            on_exit_requested.emit(1);
+            ImGui::CloseCurrentPopup();
+        }
+
+        // Also allow closing with Escape key (same as Exit)
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_show_crash_dialog = false;
+            on_exit_requested.emit(1);
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    } else {
+        // User clicked outside or pressed X — force the popup back open
+        // (crash dialog is always modal and non-dismissible that way)
+        if (!open) {
+            ImGui::OpenPopup("##NeovimError");
+        }
+    }
+}
+
+// --- Restart Neovim ---
+
+void NvimWidget::_try_restart_nvim() {
+    LOG_INFO("Restarting Neovim...");
+
+    // Close the process handle (safe now — we're in render context,
+    // not inside the exit callback).
+    if (m_nvim_proc.pid != 0) {
+        uv_close(reinterpret_cast<uv_handle_t*>(&m_nvim_proc), nullptr);
+    }
+
+    // Zero out libuv handles so they can be re-initialized by _spawn_nvim.
+    memset(&m_nvim_proc, 0, sizeof(m_nvim_proc));
+    memset(&m_in_pipe, 0, sizeof(m_in_pipe));
+    memset(&m_out_pipe, 0, sizeof(m_out_pipe));
+
+    // Use the crash restart progpath if available.
+    if (m_restart_on_crash_enabled && !m_crash_restart_progpath.empty()) {
+        m_nvim_exe = m_crash_restart_progpath;
+    }
+
+    // Reset all UI state so the new nvim instance starts with a clean slate.
+    m_grids.clear();
+    m_windows.clear();
+    m_current_grid = 1;
+    m_hl_attrs.clear();
+    m_current_hl = HighlightAttr{};
+    m_hl_group_map.clear();
+    m_mode_info.clear();
+    m_cursor_style_enabled = false;
+    m_current_mode_name.clear();
+    m_busy = false;
+    m_popup_items.clear();
+    m_popup_visible = false;
+    m_cmdline_visible = false;
+    m_cmdline_content.clear();
+    m_cmdline_block_visible = false;
+    m_cmdline_block_lines.clear();
+    m_msg_entries.clear();
+    m_msg_showmode_visible = false;
+    m_msg_showcmd_visible = false;
+    m_msg_ruler_visible = false;
+    m_msg_history_visible = false;
+    m_tabline_tabs.clear();
+    m_tabline_visible = false;
+    m_buffer_modified = false;
+    m_has_active_buffer = false;
+    m_needs_modified_check = false;
+    m_multigrid_enabled = false;
+    m_last_opened_path.clear();
+    m_state = NvimState{};
+
+    // Reset exit/crash flags so the new lifecycle can begin.
+    m_nvim_exited = false;
+    m_nvim_attached = false;
+    m_error_exit_received = false;
+    m_error_exit_status = 0;
+    m_pending_restart = false;
+    m_restart_frame_delay = 0;
+    m_show_crash_dialog = false;
+    m_nvim_resp_buf.clear();
+    m_requests.clear();
+    m_nvim_msgid.store(1);
+
+    // m_nvim_proc.pid is now 0, so render()'s existing check will
+    // call _spawn_nvim() on the next frame.
 }
 
 } // namespace ImNeovim

@@ -19,6 +19,7 @@ class LayerMainWindow : public ImApp::Layer {
     LayerMainWindow();
 
     void on_attach() override;
+    void on_detach() override;
     void on_update() override;
     void on_imgui_render() override;
 
@@ -57,6 +58,9 @@ class LayerMainWindow : public ImApp::Layer {
     // has been rendered so the ImGui window exists.
     bool m_focus_terminal_next_frame{false};
     bool m_focus_output_next_frame{false};
+
+    // Connection ID for NvimWidget crash/exit signal.
+    uint64_t m_nvim_exit_connection{0};
 
     void _show_exit_modal();
     void _render_exit_modal();
@@ -103,5 +107,8 @@ class LayerMainWindow : public ImApp::Layer {
 
     /// View > Reset Layout (native menu path).
     void _on_reset_layout();
+
+    /// NvimWidget crash/exit signal handler.
+    void _on_nvim_exit_signal(int exit_code);
 };
 } // namespace ImNeovim

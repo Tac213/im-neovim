@@ -1,5 +1,6 @@
 #pragma once
 #include "im_neovim/gui/text_widget.h"
+#include "im_neovim/signal.h"
 #include <atomic>
 #include <filesystem>
 #include <functional>
@@ -19,6 +20,9 @@ class NvimRequest;
 
 /// Reason the save dialog is being shown.
 enum class SaveDialogAction { CloseWindow, CloseTab };
+
+/// Variant of the crash/exit modal dialog.
+enum class CrashDialogMode { Exit, RestartOffer };
 
 /// Parsed representation of a Neovim guifont / guifontwide string.
 /// Format: "FamilyName:hNN[:b][:i]"  (e.g. "Fira Code:h12:b")
@@ -74,6 +78,11 @@ class NvimWidget : public TextWidget,
         const std::string& method, uint8_t param_count,
         std::function<void(msgpack::object&)>&& on_result,
         std::function<void(int32_t, const std::string&)>&& on_error);
+
+    /// Emitted when the application should exit. The int argument is the
+    /// exit code from error_exit (0 = detach, >0 = intentional exit, 1 =
+    /// crash). LayerMainWindow connects to this Signal.
+    ImNeovim::Signal<int> on_exit_requested;
 
   private:
     friend class NvimRequest;
@@ -209,6 +218,12 @@ class NvimWidget : public TextWidget,
     void _render_tabline();
     void _switch_to_tab(uint64_t tabpage_handle);
     void _query_tab_buffers_modified();
+
+    /* Crash / exit event handlers */
+    void _redraw_error_exit(msgpack::object_array& args);
+    void _redraw_set_restart_on_crash_exit(msgpack::object_array& args);
+    void _render_crash_dialog();
+    void _try_restart_nvim();
 
     /* Callbacks by libuv */
     // Called by libuv when nvim exits/
@@ -506,6 +521,17 @@ class NvimWidget : public TextWidget,
     std::vector<std::string> m_nvim_ui_options;
     bool m_nvim_attached{false};
     bool m_nvim_exited{false};
+
+    // Crash / exit tracking
+    bool m_error_exit_received{false};
+    int m_error_exit_status{0};
+    bool m_restart_on_crash_enabled{false};
+    std::string m_crash_restart_progpath;
+    std::vector<std::string> m_crash_restart_argv;
+    bool m_pending_restart{false};
+    int m_restart_frame_delay{0};
+    bool m_show_crash_dialog{false};
+    CrashDialogMode m_crash_dialog_mode{CrashDialogMode::Exit};
 
     /* msgpack-related */
     std::atomic<uint32_t> m_nvim_msgid{1};

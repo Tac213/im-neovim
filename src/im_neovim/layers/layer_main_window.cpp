@@ -180,6 +180,19 @@ void LayerMainWindow::on_attach() {
     ImNeovim::g_native_on_toggle_output.connect(
         std::bind_front(&LayerMainWindow::_toggle_output, this));
 #endif
+
+    // Connect NvimWidget crash/exit signal.
+    if (m_nvim) {
+        m_nvim_exit_connection = m_nvim->on_exit_requested.connect(
+            std::bind_front(&LayerMainWindow::_on_nvim_exit_signal, this));
+    }
+}
+
+void LayerMainWindow::on_detach() {
+    if (m_nvim && m_nvim_exit_connection != 0) {
+        m_nvim->on_exit_requested.disconnect(m_nvim_exit_connection);
+        m_nvim_exit_connection = 0;
+    }
 }
 
 void LayerMainWindow::on_imgui_render() {
@@ -671,5 +684,12 @@ void LayerMainWindow::_toggle_output() {
 }
 
 void LayerMainWindow::_on_reset_layout() { m_dock_layout->queue_reset(); }
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+void LayerMainWindow::_on_nvim_exit_signal(int exit_code) {
+    LOG_INFO("NvimWidget requested exit with code {}", exit_code);
+    // Propagate exit_code to Application if needed in the future.
+    IM_APP.exit();
+}
 
 } // namespace ImNeovim
