@@ -3,7 +3,6 @@
 #include "im_neovim/logging.h"
 #include <algorithm>
 
-
 namespace ImNeovim {
 
 ScreenCell::ScreenCell()
@@ -47,10 +46,12 @@ bool TextWidget::setup_window() {
                                  ImGuiCond_FirstUseEver);
     }
 
-    // Ensure we never pass an empty window title to ImGui
-    const char* window_title_ptr = m_window_title.c_str();
-    if (m_window_title.empty()) {
-        window_title_ptr = "Window";
+    // Build the ImGui window name.  When a stable ID is set, use the
+    // "###" separator so the window ID is constant across display-title
+    // changes — this preserves internal widget state (e.g. tab bar).
+    std::string window_name = im_window_name();
+    if (window_name.empty()) {
+        window_name = "Window";
     }
 
     // Reset persistent open flag if the window was re-shown (e.g., after close)
@@ -60,7 +61,8 @@ bool TextWidget::setup_window() {
 
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoCollapse | get_additional_window_flags();
-    bool window_created = ImGui::Begin(window_title_ptr, &m_window_open, flags);
+    bool window_created =
+        ImGui::Begin(window_name.c_str(), &m_window_open, flags);
     if (window_created) {
         m_embedded_window_pos = ImGui::GetWindowPos();
         m_embedded_window_size = ImGui::GetWindowSize();

@@ -36,6 +36,24 @@ class TextWidget {
     virtual void render() = 0;
     const std::string& window_title() const { return m_window_title; }
     void set_window_title(const std::string& title) { m_window_title = title; }
+
+    /// Set a stable ImGui window ID (used with \"###\" separator).
+    /// When set, the ImGui window name becomes "<title>###<id>",
+    /// so window-local state (tab bar, etc.) is preserved across
+    /// display-title changes.
+    void set_stable_window_id(const std::string& id) {
+        m_stable_window_id = id;
+    }
+    const std::string& stable_window_id() const { return m_stable_window_id; }
+
+    /// Returns the full ImGui window name (with ### suffix if stable ID is
+    /// set).
+    std::string im_window_name() const {
+        if (!m_stable_window_id.empty()) {
+            return m_window_title + "###" + m_stable_window_id;
+        }
+        return m_window_title;
+    }
     bool is_visible() const { return m_is_visible; }
     void set_visible(bool visible) { m_is_visible = visible; }
     bool is_embedded() const { return m_is_embedded; }
@@ -75,6 +93,7 @@ class TextWidget {
 
     // Common state
     std::string m_window_title;
+    std::string m_stable_window_id;
     bool m_is_visible{true};
     bool m_is_embedded{false};
     bool m_window_open{

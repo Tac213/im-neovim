@@ -213,9 +213,9 @@ void LayerMainWindow::on_imgui_render() {
                 // Tell the dock layout the current window names so that
                 // DockBuilderDockWindow can place them correctly.
                 m_dock_layout->set_window_names(
-                    m_file_tree->window_title(), m_nvim->window_title(),
-                    m_terminal->window_title(),
-                    m_output_widget->window_title());
+                    m_file_tree->im_window_name(), m_nvim->im_window_name(),
+                    m_terminal->im_window_name(),
+                    m_output_widget->im_window_name());
 
                 // Build the appropriate layout based on visibility.
                 bool has_folders = !globals::g_workspace.empty();
@@ -282,11 +282,11 @@ void LayerMainWindow::on_imgui_render() {
     // show + focus).  Must happen after the widget's render() so the
     // ImGui window exists.
     if (m_focus_terminal_next_frame) {
-        ImGui::SetWindowFocus(m_terminal->window_title().c_str());
+        ImGui::SetWindowFocus(m_terminal->im_window_name().c_str());
         m_focus_terminal_next_frame = false;
     }
     if (m_focus_output_next_frame) {
-        ImGui::SetWindowFocus(m_output_widget->window_title().c_str());
+        ImGui::SetWindowFocus(m_output_widget->im_window_name().c_str());
         m_focus_output_next_frame = false;
     }
 
@@ -306,8 +306,8 @@ void LayerMainWindow::on_imgui_render() {
         // Update window names before rebuilding so that
         // DockBuilderDockWindow targets the current window titles.
         m_dock_layout->set_window_names(
-            m_file_tree->window_title(), m_nvim->window_title(),
-            m_terminal->window_title(), m_output_widget->window_title());
+            m_file_tree->im_window_name(), m_nvim->im_window_name(),
+            m_terminal->im_window_name(), m_output_widget->im_window_name());
         // Reset also clears any manual visibility overrides.
         m_file_tree_forced_visible.reset();
         m_terminal_forced_visible.reset();
@@ -328,8 +328,8 @@ void LayerMainWindow::on_imgui_render() {
         m_dock_layout->clear_adaptive_rebuild_pending();
         // Update window names before rebuilding.
         m_dock_layout->set_window_names(
-            m_file_tree->window_title(), m_nvim->window_title(),
-            m_terminal->window_title(), m_output_widget->window_title());
+            m_file_tree->im_window_name(), m_nvim->im_window_name(),
+            m_terminal->im_window_name(), m_output_widget->im_window_name());
 
         bool has_folders = !globals::g_workspace.empty();
         bool show_ft = m_file_tree_forced_visible.value_or(has_folders);
@@ -629,7 +629,7 @@ void LayerMainWindow::_toggle_terminal() {
 
     // Visible — check if it's the active tab in the bottom dock node.
     if (m_dock_layout->is_active_tab_in_bottom_dock(
-            m_terminal->window_title())) {
+            m_terminal->im_window_name())) {
         // State 3: visible AND active tab → hide the entire bottom dock
         // area (both terminal and output).
         m_terminal_forced_visible = false;
@@ -639,7 +639,7 @@ void LayerMainWindow::_toggle_terminal() {
     }
 
     // State 2: visible but not the active tab → focus it.
-    ImGui::SetWindowFocus(m_terminal->window_title().c_str());
+    ImGui::SetWindowFocus(m_terminal->im_window_name().c_str());
     // Checkmark stays on; no layout rebuild needed.
     m_dock_layout->terminal_visible = true;
 #ifdef IM_APP_DARWIN
@@ -665,7 +665,7 @@ void LayerMainWindow::_toggle_output() {
 
     // Visible — check if it's the active tab in the bottom dock node.
     if (m_dock_layout->is_active_tab_in_bottom_dock(
-            m_output_widget->window_title())) {
+            m_output_widget->im_window_name())) {
         // State 3: visible AND active tab → hide the entire bottom dock
         // area (both terminal and output).
         m_terminal_forced_visible = false;
@@ -675,7 +675,7 @@ void LayerMainWindow::_toggle_output() {
     }
 
     // State 2: visible but not the active tab → focus it.
-    ImGui::SetWindowFocus(m_output_widget->window_title().c_str());
+    ImGui::SetWindowFocus(m_output_widget->im_window_name().c_str());
     // Checkmark stays on; no layout rebuild needed.
     m_dock_layout->output_visible = true;
 #ifdef IM_APP_DARWIN

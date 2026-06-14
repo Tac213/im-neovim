@@ -65,6 +65,7 @@ class Terminal : public TextWidget {
     void resize(int cols, int rows);
     const std::string& window_title() const { return m_window_title; }
     void set_window_title(const std::string& title) { m_window_title = title; }
+    std::string im_window_name() const { return m_window_title; }
     bool is_visible() const { return m_is_visible; }
     void set_visible(bool visible) { m_is_visible = visible; }
     bool is_embedded() const { return m_is_embedded; }

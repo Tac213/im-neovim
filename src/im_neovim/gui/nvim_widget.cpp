@@ -183,6 +183,7 @@ void NvimWidget::Grid::scroll_region(int count) {
 
 NvimWidget::NvimWidget() {
     m_window_title = "nvim (no file)";
+    m_stable_window_id = "NvimWidget";
     m_window_icon.clear();
 
     // Use the first workspace folder (or home directory if empty).
@@ -2958,6 +2959,21 @@ void NvimWidget::_redraw_tabline_update(msgpack::object_array& args) {
         m_tabline_needs_sync = true;
     }
 
+    // When Neovim's curtab changes externally (e.g. :tab drop from
+    // the file tree or :tabnext in Neovim), pre-set the sync flag so
+    // the next _render_tabline() forces ImGui's selection to the
+    // correct tab via SetSelected.  Without this, ImGui may default-
+    // select the first tab when the tab list changes, and the
+    // spurious selection would trigger _switch_to_tab() to the wrong
+    // tabpage.
+    if (m_tabline_visible && m_tabline_last_gui_selected != 0 &&
+        m_tabline_curtab != m_tabline_last_gui_selected) {
+        LOG_DEBUG("tabline_update: external curtab change, "
+                  "old_gui={}, new_curtab={}, enabling sync",
+                  m_tabline_last_gui_selected, m_tabline_curtab);
+        m_tabline_needs_sync = true;
+    }
+
     LOG_TRACE("tabline_update: curtab={}, tabs={}, curbuf={}, buffers={}",
               m_tabline_curtab, m_tabline_tabs.size(), m_tabline_curbuf,
               m_tabline_buffers.size());
@@ -4013,6 +4029,10 @@ void NvimWidget::_render_tabline() {
         // list rebuilds may have selected the wrong tab.  Don't issue
         // a switch based on it; let SetSelected retry next frame.
         if (gui_changed && differs_from_nvim && !m_tabline_needs_sync) {
+            LOG_DEBUG("tabline switch: gui_selected={}, curtab={}, "
+                      "last_gui={}, needs_sync={}",
+                      gui_selected_this_frame, m_tabline_curtab,
+                      m_tabline_last_gui_selected, m_tabline_needs_sync);
             _switch_to_tab(gui_selected_this_frame);
         }
 

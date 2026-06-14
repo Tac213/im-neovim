@@ -37,6 +37,7 @@ class OutputWidget {
 
     const std::string& window_title() const { return m_window_title; }
     void set_window_title(const std::string& title) { m_window_title = title; }
+    std::string im_window_name() const { return m_window_title; }
 
     // -- Visibility --
 
